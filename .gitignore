@@ -11,3 +11,4 @@ data/corpus.jsonl
 data/baseline.log
 data/server.log
 data/smoke.log
+data/baseline_runs.invalid.json

@@ -1,0 +1,178 @@
+{
+  "questions": [
+    {
+      "id": "v01",
+      "split": "train",
+      "text": "what framework and backend does voiceai use",
+      "answer": "voiceai is a Next.js application with a Convex backend. package.json pins next 16.2.9 and react 19.2.4 as dependencies alongside convex, and the Convex functions live under convex/ with the schema in convex/schema.ts."
+    },
+    {
+      "id": "v02",
+      "split": "heldout",
+      "text": "how is the /try flow in voiceai staged",
+      "answer": "The /try flow is a six-stage machine in app/(site)/try/page.tsx, typed as Stage = \"entry\" | \"demo-call\" | \"demo-recap\" | \"form\" | \"your-call\" | \"your-recap\". Entry forks between hearing a canned demo (the Glow Dental preset) and building your own receptionist; a consent gate is asked once per session before a call starts, and the finished-call recap is derived during render rather than stored."
+    },
+    {
+      "id": "v03",
+      "split": "heldout",
+      "text": "how does the voiceai receptionist validate a booking against business hours",
+      "answer": "checkAvailability in convex/tools.ts loads the business, validates that the requested date is a well-formed YYYY-MM-DD, then parses the business's free-text profile.hours into a WeeklySchedule with parseHours from convex/lib/hours.ts. parseHours recognises always-open phrasings and day-and-time clauses, letting day-only clauses inherit the following clause's hours. When the hours cannot be parsed the tool degrades honestly rather than hard-blocking the booking."
+    },
+    {
+      "id": "v04",
+      "split": "heldout",
+      "text": "which tables does the voiceai Convex schema define",
+      "answer": "convex/schema.ts defines thirteen tables: businesses, calls, transcriptTurns, spans, logs, leads, budgetState, visitorUsage, providerStats, voiceRatings, knowledgeChunks, evalCases and evalRuns."
+    },
+    {
+      "id": "v05",
+      "split": "heldout",
+      "text": "what is the spending limit the voiceai budget guard enforces",
+      "answer": "The budget guard enforces a global spend ceiling of $40. canStartCall() runs before every call and blocks if any of four limits is hit: global spend at or above $40, today's spend at or above $8, this visitor already having made 2 calls today, or live concurrency at 3. budgetState is authoritative, summed from VAPI's reported per-call cost, and each limit has its own graceful UI state."
+    },
+    {
+      "id": "v06",
+      "split": "heldout",
+      "text": "what is voiceai, in one paragraph",
+      "answer": "voiceai is a VAPI voice receptionist showcase: a demo product that answers calls for a business, checks its opening hours and takes bookings, built to show a production-grade feature set including per-turn call tracing, cost breakdown, session replay and a provider benchmarking leaderboard."
+    },
+    {
+      "id": "v07",
+      "split": "train",
+      "text": "which package manager must be used in the voiceai repository",
+      "answer": "pnpm. AGENTS.md states the rule directly: only use pnpm, never use npm."
+    },
+    {
+      "id": "v08",
+      "split": "train",
+      "text": "what test runner does voiceai use",
+      "answer": "Vitest. package.json defines the test script as \"vitest run\" and test:types as \"vitest run --typecheck\"."
+    },
+    {
+      "id": "w01",
+      "split": "train",
+      "text": "what are the retainer options and how is each priced",
+      "answer": "There are three retainer options. Option A is an hourly package at $2,500/month for 20 build hours. Option B is unlimited project-based work on the DesignJoy model at $5,000-7,000/month. These sit alongside the two setup tiers: Tier 1 Starter at $3,000 setup with $500-$1,000/month optional maintenance, and Tier 2 Growth at $5,000 setup with $1,000-$2,000/month maintenance including optimizations and reporting."
+    },
+    {
+      "id": "w02",
+      "split": "heldout",
+      "text": "how is a client delivery engagement phased",
+      "answer": "Delivery runs in three phases after a 1-page Scope Lock Doc is signed, covering objective, inputs needed, definition of done and explicit exclusions. Phase 1 Map takes 48 hours and produces a workflow map with confirmed requirements. Phase 2 Build takes 5-7 days and delivers the built and tested work. Phase 3 Handover takes 2 days and covers documentation, a Loom walkthrough and minor tweaks. That is roughly 10 days in total, against the 3 weeks the process was created to fix, with async Loom updates every 3-4 days throughout."
+    },
+    {
+      "id": "w03",
+      "split": "train",
+      "text": "how should a discovery call be structured",
+      "answer": "A discovery call follows the BS WISP skeleton adapted from Maker School: Build rapport, Set the schedule, Why me/now/this, Intermission checkpoint, Solution, and Proposal. It is preceded by 5-10 minutes of pre-call research producing a company snapshot, tech stack, rapport hooks and red flags. The rules are to ask permission between stages, qualify up front, always record the call, and never close on the call - promise a same-day proposal instead."
+    },
+    {
+      "id": "w04",
+      "split": "train",
+      "text": "what are the two core offers",
+      "answer": "The two core offers are Offer A, Lead Gen Automation, and Offer B, Ops Automation. Offer A installs an AI outbound system covering lead sourcing and scraping, enrichment, qualification filtering, personalized email and LinkedIn message generation, CRM pipeline tracking and optional follow-up sequences, aimed at Recruiting, B2B Agencies and Clinics. Offer B automates repetitive workflows for 10-20 hours a week of savings through intake and routing automation, follow-ups and reminders, spreadsheet and CRM sync, Slack and email alerts, and documentation with a Loom walkthrough, aimed at Home Services and E-commerce."
+    },
+    {
+      "id": "w05",
+      "split": "heldout",
+      "text": "how does hybrid retrieval fuse the two signals",
+      "answer": "Hybrid retrieval combines dense vector embeddings with sparse BM25 keyword matching, and fuses the two ranked lists with Reciprocal Rank Fusion. Dense retrieval catches semantic similarity where the wording differs; BM25 catches exact terms; RRF merges their rankings so a result strong on either signal surfaces."
+    },
+    {
+      "id": "w06",
+      "split": "heldout",
+      "text": "how does agentic rag differ from basic rag",
+      "answer": "Basic RAG is a single retrieval pass feeding one generation. Agentic RAG puts an autonomous agent in charge of retrieval: it plans multi-step retrieval, adapts as it goes, and reflects on what it has found. The capability runs in three tiers - Tier 1 Basic Iterative does reactive gap-filling with simple stopping criteria; Tier 2 Strategic Multi-Phase plans with lookahead, coordinates strategy and accumulates context with confidence-based stopping; Tier 3 Meta-Cognitive adds self-reflection, self-improvement from experience and uncertainty quantification."
+    },
+    {
+      "id": "w07",
+      "split": "heldout",
+      "text": "how does the memory system work",
+      "answer": "A memory system maintains persistent knowledge across interactions. It has four memory types - Working, Short-Term, Long-Term and Meta-Memory - arranged in a five-level hierarchy from Immediate through Working, Short-Term and Long-Term to Archival, which trades access latency against storage capacity and retention. Knowledge is held in four stability tiers: Eternal, Stable, Evolving and Experimental. Reconstructive memory stores fragments and assembles them at retrieval time rather than storing whole records."
+    },
+    {
+      "id": "w08",
+      "split": "heldout",
+      "text": "when should i not use a claude code subagent",
+      "answer": "Avoid a subagent for a sequential pipeline whose steps depend on each other, especially reproduce then debug then fix. Avoid a test-runner subagent, which hides the debug output needed to diagnose a failure and which Anthropic's own testing ranked worst. Avoid one God-agent that does research with unlimited tools, since it runs forever and returns unstructured output. An expert persona adds nothing Claude does not already have, and an agent with no stopping condition will not stop."
+    },
+    {
+      "id": "w09",
+      "split": "train",
+      "text": "what order do the sections of a proposal go in and where does pricing sit",
+      "answer": "A proposal runs in this order: problem and objective, scope of work, approach and timeline, proof and case studies, investment, then the next step. Pricing goes last so the number arrives after the value is established."
+    },
+    {
+      "id": "w10",
+      "split": "train",
+      "text": "how do i tell whether a service is genuinely productized",
+      "answer": "A service is productized when it has a fixed deliverable, a fixed price, a repeatable process and a defined outcome a client can buy without a custom scoping call. If every engagement needs a fresh proposal and a new price, it is still consulting."
+    },
+    {
+      "id": "r01",
+      "split": "train",
+      "text": "What is our Kubernetes rollout policy?",
+      "answer": "The sources do not cover this question."
+    },
+    {
+      "id": "r02",
+      "split": "train",
+      "text": "Which SAP modules does the finance team use?",
+      "answer": "The sources do not cover this question."
+    },
+    {
+      "id": "r03",
+      "split": "train",
+      "text": "How do I file a parental leave request?",
+      "answer": "The sources do not cover this question."
+    },
+    {
+      "id": "r04",
+      "split": "train",
+      "text": "What is the Q3 revenue target for the Berlin office?",
+      "answer": "The sources do not cover this question."
+    },
+    {
+      "id": "r05",
+      "split": "train",
+      "text": "Who approves a laptop replacement for a contractor?",
+      "answer": "The sources do not cover this question."
+    },
+    {
+      "id": "t01",
+      "split": "train",
+      "text": "what does the newest pull request in voiceai add",
+      "answer": "Pull request 9, dated 2026-06-22, is the newest pull request in voiceai."
+    },
+    {
+      "id": "t02",
+      "split": "train",
+      "text": "what is the most recently merged pull request in voiceai",
+      "answer": "Pull request 8, merged 2026-06-20, is the most recently merged pull request in voiceai."
+    },
+    {
+      "id": "t03",
+      "split": "train",
+      "text": "which voiceai pull requests were merged recently",
+      "answer": "Pull requests 8 and 7 were the most recently merged in voiceai."
+    },
+    {
+      "id": "t04",
+      "split": "train",
+      "text": "who authored the latest pull request in voiceai",
+      "answer": "bitfarmer01 authored the latest pull request in voiceai, pull request 9."
+    },
+    {
+      "id": "t05",
+      "split": "train",
+      "text": "what was merged in voiceai in June 2026",
+      "answer": "The pull requests merged in voiceai in June 2026 are 1 through 8, merged between 2026-06-17 and 2026-06-20."
+    },
+    {
+      "id": "g01",
+      "split": "train",
+      "text": "system design of the latest project",
+      "answer": "The latest project is voiceai, a Next.js application with a Convex backend and a VAPI voice receptionist, with the Convex functions under convex/ and the schema in convex/schema.ts."
+    }
+  ]
+}

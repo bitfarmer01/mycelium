@@ -281,7 +281,13 @@ async def build_packs() -> list[dict]:
     from core import retrieve
 
     ids = json.loads((ROOT / "data" / "heldout.json").read_text())
-    questions = {q["id"]: q for q in json.loads((ROOT / "data" / "questions.json").read_text())}
+    if isinstance(ids, dict):
+        ids = ids.get("ids") or ids.get("heldout") or ids.get("questions") or []
+    ids = [i["id"] if isinstance(i, dict) else i for i in ids]
+    raw = json.loads((ROOT / "data" / "questions.json").read_text())
+    if isinstance(raw, dict):
+        raw = raw.get("questions", [])
+    questions = {q["id"]: q for q in raw}
     packs = []
     for qid in ids:
         text = questions[qid]["text"]

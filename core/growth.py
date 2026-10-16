@@ -117,8 +117,8 @@ def candidate_pool(baseline: str, pool: dict) -> list[dict]:
 # ---------- lint ----------
 
 def _ratio(candidate: str, baseline: str) -> float:
-    """Whitespace-token ratio (the slot's length in words relative to the baseline)."""
-    return len(candidate.split()) / max(1, len(baseline.split()))
+    """Whitespace-token ratio of the rendered instruction the model sees (slot + CONTRACT) to the baseline's."""
+    return len((candidate + "\n\n" + CONTRACT).split()) / max(1, len((baseline + "\n\n" + CONTRACT).split()))
 
 
 def lint(candidate: str, baseline: str) -> tuple[bool, str]:
@@ -224,10 +224,15 @@ def _finite(x):
     return None if x is None or (isinstance(x, float) and not math.isfinite(x)) else x
 
 
-async def _persist(row: dict, slot: str) -> None:
+async def _persist(row: dict, slot: str) -> str:
     content = {k: _finite(v) for k, v in row.items()}
     content.update({"slot_hash": slot_hash(slot), "ts": db.now()})
-    await db.q("CREATE candidate CONTENT $c", {"c": content})
+    rows = await db.q("CREATE candidate CONTENT $c", {"c": content})
+    try:
+        r = rows[0] if isinstance(rows, list) and rows else rows
+        return str(r.get("id", "")) if isinstance(r, dict) else ""
+    except Exception:
+        return ""
 
 
 async def improve() -> dict:
@@ -246,11 +251,11 @@ async def improve() -> dict:
             continue
         row = _row(c["name"], c["axis"], status="vetoed_prelint", veto_reason=reason)
         rows.append(row)
-        await _persist(row, c["slot"])
+        cand_id = await _persist(row, c["slot"])
         await learn.write_ledger(LedgerRow(target=f"candidate:{c['name']}", target_kind="candidate", type="veto",
                                            delta=0.0, before=0.0, after=0.0, cause=f"lint: {reason}"))
         await learn.write_lesson("growth", f"vetoed candidate {c['name']} before any sandbox",
-                                 f"lint {reason}", "growth", [], [], "veto")
+                                 f"lint {reason}", "growth", [], [cand_id] if cand_id else [], "veto")
 
     baseline_runs = _load_json("baseline_runs.json")
     packs = _load_json("heldout_packs.json")
@@ -290,7 +295,7 @@ async def improve() -> dict:
                    delta=g["delta"], ratio=_finite(g["ratio"]), sandbox_id=res.get("sandbox_id"),
                    runner=res.get("runner"))
         rows.append(row)
-        await _persist(row, c["slot"])
+        cand_id = await _persist(row, c["slot"])
         await learn.write_ledger(LedgerRow(target=f"candidate:{c['name']}", target_kind="candidate", type="gate",
                                            delta=g["delta"], before=g["baseline_mean"], after=g["mean"],
                                            cause=f"gate {g['verdict']} delta {g['delta']:.3f} spread {g['spread']:.3f}"))

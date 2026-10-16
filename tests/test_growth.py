@@ -44,14 +44,37 @@ def test_lint_passes_clean_suffixes():
             assert ok, (c["name"], reason)
 
 
-def test_lint_composed_pair_exceeds_ratio():
-    # Known and reported: the default composed pair is ~1.37x the short baseline (words and chars),
-    # over CONFIG["slot_token_ratio"] 1.25, so it is vetoed by length, not by a forbidden pattern.
+def test_lint_composed_pair_within_rendered_ratio():
+    # Lead's decision: the ratio is measured on the rendered instruction (slot + CONTRACT), so the
+    # composed pair is within CONFIG["slot_token_ratio"] 1.25 and passes lint.
     composed = [c for c in growth.candidate_pool(BASELINE, growth.DEFAULT_POOL) if c["axis"] == "composed"]
     assert composed
     for c in composed:
+        assert growth.lint(c["slot"], BASELINE) == (True, "ok")
+
+
+def test_lint_overlong_candidate_still_vetoed():
+    from core.contracts import CONTRACT
+    pad = " ".join(["Keep each sentence short."] * len((BASELINE + CONTRACT).split()))
+    pool = {"suffixes": [{"name": "doubles-prompt", "axis": "format", "text": pad}], "composed": [], "poisons": []}
+    (c,) = [c for c in growth.candidate_pool(BASELINE, pool) if c["name"] == "doubles-prompt"]
+    ok, reason = growth.lint(c["slot"], BASELINE)
+    assert (ok, reason) == (False, "slot too long (ratio)")
+
+
+def test_lint_delivered_pool_clean_pass_poisons_die():
+    import json
+    from pathlib import Path
+    raw = json.loads((Path(__file__).resolve().parents[1] / "data" / "candidates.json").read_text())
+    cands = growth.candidate_pool(BASELINE, raw)
+    poisons = [c for c in cands if c["poison"]]
+    assert len(poisons) == 3
+    for c in cands:
         ok, reason = growth.lint(c["slot"], BASELINE)
-        assert (ok, reason) == (False, "slot too long (ratio)")
+        if c["poison"]:
+            assert not ok and "forbidden pattern" in reason, (c["name"], reason)
+        elif c["axis"] != "composed":
+            assert ok, (c["name"], reason)
 
 
 def test_lint_frozen_section_change_vetoed():

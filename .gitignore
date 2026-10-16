@@ -9,3 +9,5 @@ infra/surreal-data/
 data/usage.jsonl
 data/corpus.jsonl
 data/baseline.log
+data/server.log
+data/smoke.log

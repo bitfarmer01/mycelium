@@ -152,11 +152,12 @@ async def _move_prior(shape: str, role: str, rate: float, cause: str) -> tuple[l
 async def _chunk(cid: str) -> dict:
     row = _first(await db.q(f"SELECT * FROM {_ref(cid)}"))
     return {"alpha": float(row.get("alpha") or 1.0), "beta": float(row.get("beta") or 1.0),
-            "source": row.get("source")}
+            "source": row.get("source") or (row.get("metadata") or {}).get("source")}
 
 
 async def _source_mean(src: str) -> tuple[float, float]:
-    rows = await db.q(f"SELECT alpha, beta FROM chunk WHERE source = {_ref(src)}")
+    rows = await db.q(f"SELECT alpha, beta FROM chunk WHERE source = {_ref(src)} OR metadata.source = $s",
+                      {"s": str(src)})
     rows = [r for r in rows if isinstance(r, dict)]
     if not rows:
         return 1.0, 1.0

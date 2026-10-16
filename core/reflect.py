@@ -15,7 +15,7 @@ REFLECT_SYSTEM = (
 )
 EMPTY_SENTENCE = "I have not learned anything yet today."
 MAX_SENTENCES = 5
-DECIDED_STATUSES = ["vetoed", "promoted", "rejected", "accepted", "gated"]
+DECIDED_STATUSES = ["vetoed", "vetoed_prelint", "scored", "promoted", "rejected", "accepted", "gated"]
 
 
 def _since() -> str:
@@ -54,7 +54,7 @@ async def derive_lessons_from_observations() -> int:
         kind = o.get("kind") or "observation"
         frm, to = o.get("from_role"), o.get("to_role")
         change = f"Observed {kind}" + (f" from {frm} to {to}" if frm or to else "")
-        q = o.get("question_id")
+        q = o.get("question_id") or o.get("question")
         rationale = f"on question {q}" if q else "recorded during today's questions"
         await learn.write_lesson(
             phase="observe", change=change, rationale=rationale, contributor="reflect",

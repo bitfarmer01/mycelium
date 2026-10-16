@@ -194,7 +194,7 @@ def spoken_tier(result: dict, taken: dict) -> str:
 def _titles_from_context(context: str) -> str:
     titles = []
     for line in (context or "").splitlines():
-        m = re.match(r"\s*\[(\d+)\]\s*(.+)", line)
+        m = re.match(r"\s*\[Document (\d+) \(Source: (.+?)\)\]", line) or re.match(r"\s*\[(\d+)\]\s*(.+)", line)
         if m:
             titles.append(f"[{m.group(1)}] {m.group(2).strip()}")
     return "\n".join(titles)
@@ -262,12 +262,17 @@ async def ask(text: str, session_id: str) -> dict:
         "readings": [dict(rd, posterior=post) for rd, post in zip(r["readings"], posterior)],
         "taken": taken.get("role"),
         "split": "demo",
+        "ts": db.now(),
         "created_at": db.now(),
     }
     created = await db.q("CREATE question CONTENT $row", {"row": row})
     question_id = str(created[0]["id"]) if created and isinstance(created[0], dict) and created[0].get("id") else ""
 
-    await learn.record_answer(question_id, shape, taken.get("role"), chunk_ids)
+    try:
+        await learn.record_answer(question_id, shape, taken.get("role"), chunk_ids)
+    except Exception as e:  # non-fatal: the answer stands even if the ledger write fails
+        import logging
+        logging.getLogger("mycelium.reflex").warning("record_answer failed: %s", type(e).__name__)
 
     return {
         "question_id": question_id,

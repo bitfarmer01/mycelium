@@ -24,7 +24,7 @@ class LLMError(Exception):
 
 
 def cli_args(system: str, schema: dict | None) -> list[str]:
-    args = ["claude", "--print", "--output-format", "json", "--max-turns", "1", "--tools", "",
+    args = ["claude", "--print", "--output-format", "json", "--max-turns", "3", "--tools", "",
             "--strict-mcp-config", "--no-session-persistence", "--system-prompt", system]
     return args + (["--json-schema", json.dumps(schema)] if schema else [])
 

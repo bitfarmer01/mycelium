@@ -50,7 +50,7 @@ def _cli_args(system: str) -> list[str]:
         from core import llm
         return llm.cli_args(system, SYNTHESIS_SCHEMA)
     except (ImportError, AttributeError):
-        args = ["claude", "--print", "--output-format", "json", "--max-turns", "1", "--tools", "",
+        args = ["claude", "--print", "--output-format", "json", "--max-turns", "3", "--tools", "",
                 "--strict-mcp-config", "--no-session-persistence", "--system-prompt", system]
         return args + ["--json-schema", json.dumps(SYNTHESIS_SCHEMA)]
 

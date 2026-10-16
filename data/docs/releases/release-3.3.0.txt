@@ -1,0 +1,9 @@
+# Release 3.3.0
+
+source_link: https://github.com/surrealdb/surrealdb/releases/tag/v3.3.0
+
+published: 2026-09-28
+
+Release v3.3.0
+
+Assets: LICENSE, surreal-v3.3.0.darwin-amd64.tgz, surreal-v3.3.0.darwin-arm64.tgz, surreal-v3.3.0.darwin-universal.tgz, surreal-v3.3.0.linux-amd64.tgz, surreal-v3.3.0.linux-arm64.tgz, surreal-v3.3.0.windows-amd64.exe

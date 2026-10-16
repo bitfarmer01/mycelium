@@ -1,0 +1,217 @@
+# LIVE SELECT
+
+source_link: https://surrealdb.com/docs/reference/query-language/statements/live-select
+
+# `LIVE SELECT` statement
+
+Live Queries is a feature that allows you to listen for creations, updates and deletions to specific records you are interested in or entire tables.
+
+The `LIVE SELECT` statement can be used to initiate a real-time selection from a table, including the option to apply filters.
+
+In practical terms, when you execute a `LIVE SELECT` query, it triggers an ongoing session that captures any subsequent changes to the data in real-time. These changes are then immediately transmitted to the client, ensuring that the client is consistently updated with the latest data modifications.
+
+> [!NOTE]
+> Errors while evaluating a live query's `WHERE` clause or projection (for example a type mismatch) skip that notification; they do not roll back the write that triggered the live query. Live subscriptions are ended when the session is invalidated or its TTL expires, when you [`KILL`](/docs/reference/query-language/statements/kill) the live query, or when the underlying table is removed. Built-in live parameters (`$value`, `$before`, `$after`, `$event`, and related names) always take precedence over user variables captured at registration time.
+
+> [!IMPORTANT]
+> In SurrealDB Community, a live query only receives changes made on the node that holds its subscription, so it suits single-node deployments. Live queries that receive changes from every node in a cluster are part of [Enterprise Edition](/docs/manage/enterprise/product/database-enterprise), as distributed live queries.
+
+## Statement syntax
+
+ 
+**SurrealQL Syntax**
+
+```syntax title="SurrealQL Syntax"
+LIVE SELECT
+ [
+ [ VALUE ] @fields ... [ AS @alias ]
+ | DIFF
+ ]
+ FROM @targets
+ [ WHERE @conditions ]
+ [ FETCH @fields ... ]
+;
+```
+
+ 
+**Railroad Diagram**
+
+## Example usage
+
+### Basic usage
+
+By default, SurrealDB will push the entire record over the websocket when it is created or updated. When a record is deleted, the notification carries the record as it was before deletion.
+
+```surql
+/**[test]
+run = false
+
+[[test.results]]
+value = "u'0f0d0e40-f371-4a68-8ee0-6d5eb3565b76'"
+skip-uuid = true
+
+*/
+
+LIVE SELECT * FROM person;
+```
+
+```surql title="Sample output"
+u'b1f1d115-ad0f-460d-8cbf-dbc7ce48851c'
+```
+
+The result of the above query will be a UUID. This UUID is the Live Query Unique ID, and is used to differentiate between different Live Queries. You will want to keep track of this ID, so that you can differentiate between different notifications being received after this query. You can also use this UUID to [KILL](/docs/reference/query-language/statements/kill) (stop) the Live Query. The protocol will then send messages that are of a Notification format.
+
+You can find an example of such a message in the [Live Query WebSocket protocol](/docs/reference/rest-api/rpc-protocol#live) description.
+
+### Diff
+
+When using the `DIFF` mode, updates will be sent in the form of an array with [JSON Patch](https://jsonpatch.com/) messages.
+
+```surql
+/**[test]
+run = false
+
+[[test.results]]
+value = "u'0f0d0e40-f371-4a68-8ee0-6d5eb3565b76'"
+skip-uuid = true
+
+*/
+
+LIVE SELECT DIFF FROM person;
+```
+
+```surql title="Sample output"
+u\'b87cbb0d-ca15-4f0a-8f86-caa680672aa5\'
+```
+
+### Filter the live query
+
+You can optionally apply filters with the `WHERE` clause.
+
+```surql
+/**[test]
+run = false
+
+[[test.results]]
+value = "u'0f0d0e40-f371-4a68-8ee0-6d5eb3565b76'"
+skip-uuid = true
+
+*/
+
+LIVE SELECT * FROM person WHERE age > 18;
+```
+
+A live query filter is evaluated against the record after the change, so a record that stops matching the filter produces no notification. The `$before` and `$after` parameters hold the record as it was before and after the change, and can be used in the `WHERE` clause to compare the two. The following live query also notifies when a task stops being open, because `$before` still matches:
+
+```surql
+DEFINE TABLE task;
+LIVE SELECT * FROM task WHERE status = 'open' OR $before.status = 'open';
+```
+
+With this live query, `CREATE task:1 SET status = 'open'` and then `UPDATE task:1 SET status = 'done'` each send a notification, the second one carrying the record with `status: 'done'`. A further update from `'done'` to `'archived'` sends nothing, because neither the old nor the new value is `'open'`.
+
+### Filter by event
+
+The `$event` parameter holds the kind of change that triggered the notification: `'CREATE'`, `'UPDATE'` or `'DELETE'`. Use it in the `WHERE` clause to receive only some kinds of change.
+
+```surql
+LIVE SELECT * FROM person WHERE $event = 'CREATE';
+```
+
+To receive several kinds, compare against an array.
+
+```surql
+LIVE SELECT * FROM person WHERE $event IN ['UPDATE', 'DELETE'];
+```
+
+Over a WebSocket connection, the first query above delivers a notification for each created record and none for updates or deletes. The second delivers notifications for updates and deletes only.
+
+### Relation tables
+
+A live query on a [relation table](/docs/reference/query-language/statements/define/table) sends a notification each time an edge is created, updated or deleted, so a client can watch for new relationships.
+
+```surql
+DEFINE TABLE wrote TYPE RELATION;
+LIVE SELECT * FROM wrote;
+
+RELATE person:a->wrote->person:b SET at = 1;
+```
+
+```json title="Sample notification"
+{
+ "action": "CREATE",
+ "id": "8fcb4c22-b4f6-4f6d-9eca-80f872146ad9",
+ "record": "wrote:7exf5ouot5pw40ekjnfi",
+ "result": { "at": 1, "id": "wrote:7exf5ouot5pw40ekjnfi", "in": "person:a", "out": "person:b" }
+}
+```
+
+A live query takes a table, so graph traversal such as `LIVE SELECT ->wrote FROM person:a` is not supported and returns `Cannot execute LIVE statement using value: person:a`. To follow the edges of one record, filter the relation table on its `in` or `out` field instead:
+
+```surql
+LIVE SELECT * FROM wrote WHERE in = person:a;
+```
+
+## Consistency guarantees
+
+When using Live Queries, it is important to understand the ordering of messages and events when many clients and transactions are running in parallel. Notifications on live queries are only published for committed transactions.
+
+Ordering is kept correct on a best-effort basis, but it is not yet strictly guaranteed. As such, some messages may be received out of order from their commit order. However, transactions that are committed from the same client will always be in order.
+
+Security enforcement is always evaluated per notification and will reflect the value of authorisation at the time of publishing the notification. This means that if a transaction is committed, after which the authorisation immediately changes for the live query receiver, the receiver will get the notification under the new rules.
+
+### Changing a session's authentication ends its live queries
+
+A live query records the authentication principal of the session that registered it. If that session becomes a different principal - through `signin`, `signup`, `authenticate`, `invalidate`, or a token refresh that resolves to a different identity - the session's live queries are ended and receive no further notifications. They must be registered again under the new principal if they are still needed.
+
+A token refresh for the same identity does not change the principal, so its live queries continue.
+
+> [!NOTE]
+> Before SurrealDB 3.3.0, embedded engines (`mem://`, `rocksdb://`, `surrealkv://`) did not end live queries when the session's principal changed, so a subscription kept sending notifications under the access controls of the previous principal. Connections over `ws://` and `http://` behaved as described above.
+
+### Live queries end with their connection
+
+A live query belongs to the WebSocket connection that started it. When the connection closes, whether the client closes it or the network drops it, the server ends every live query that the connection started, so a client that disconnects without running [`KILL`](/docs/reference/query-language/statements/kill) leaves nothing running. The RPC [`reset`](/docs/reference/rest-api/rpc-protocol#reset) method also ends the connection's live queries.
+
+A client that reconnects gets a new connection, so it has to start its live queries again. The JavaScript SDK does this for live queries created with [`.live()`](/docs/reference/javascript/concepts/live-queries#automatic-restart-on-reconnect), but not for a `LIVE SELECT` statement sent as a query.
+
+## Fetching inside live queries
+
+The `FETCH` clause can be used inside live queries as well.
+
+```surql
+/**[test]
+run = false
+
+[[test.results]]
+value = "u'0f0d0e40-f371-4a68-8ee0-6d5eb3565b76'"
+skip-uuid = true
+
+*/
+
+LIVE SELECT * FROM person WHERE age > 18 FETCH friends;
+```
+
+## Other notes
+
+Since SurrealDB 3.0, parameters can be used inside a `LIVE SELECT` statement, including in the `WHERE` clause (see [Parameters in `LIVE SELECT` statements](#parameters-in-live-select-statements) below). Parameter values are captured when the live query is registered; changing a parameter afterwards does not affect an already-registered live query - re-register the live query to apply a new value.
+
+Note that a bare parameter cannot be used as the table reference. Use `type::table()` instead:
+
+```surql
+-- Does not work: bare parameter as the table reference
+-- LIVE SELECT * FROM $table WHERE field > 50;
+
+-- Works:
+LIVE SELECT * FROM type::table($table) WHERE field > 50;
+```
+
+## Parameters in `LIVE SELECT` statements
+
+Parameters can also be used inside a `LIVE SELECT` statement.
+
+```surql
+LET $table = 'measurement';
+LET $location = 'Tallinn';
+LIVE SELECT * FROM type::table($table) WHERE location == $location;
+```

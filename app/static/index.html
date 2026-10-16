@@ -1,0 +1,1740 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="color-scheme" content="dark">
+<title>Mycelium · live console</title>
+<style>
+  :root{
+    --bg:#07080b; --bg2:#0a0c11;
+    --s1:#0f1218; --s2:#141922; --s3:#1a202b; --s4:#212836;
+    --line:#20262f; --line2:#2c3441; --line3:#3a4353;
+    --ink:#eaeef4; --muted:#98a3b4; --dim:#66707f;
+    --green:#37d18d; --green-l:#0e2b20; --green-b:#1c5340; --green-t:#a9f0cf;
+    --red:#ff5f6d;   --red-l:#2c1114;   --red-b:#5c2429;   --red-t:#ffc3c8;
+    --amber:#f6b64a; --amber-l:#2a2010; --amber-b:#5a451c; --amber-t:#ffe0a8;
+    --grey:#7d8798;  --grey-l:#171b22;  --grey-b:#333b47;  --grey-t:#c6cdd8;
+    --blue:#5aa2ff;  --blue-l:#101d31;  --blue-b:#27456e;  --blue-t:#bcd8ff;
+    --font:ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,Ubuntu,Cantarell,"Helvetica Neue",Arial,sans-serif;
+    --mono:ui-monospace,"SF Mono",SFMono-Regular,Menlo,Consolas,"Liberation Mono",monospace;
+    --r:13px; --r2:10px;
+    --shadow:0 1px 2px rgba(0,0,0,.5), inset 0 1px 0 rgba(255,255,255,.028);
+    --glow-g:0 0 0 1px rgba(55,209,141,.55), 0 0 24px rgba(55,209,141,.32);
+    --glow-r:0 0 0 1px rgba(255,95,109,.55), 0 0 24px rgba(255,95,109,.30);
+    --glow-a:0 0 0 1px rgba(246,182,74,.55), 0 0 24px rgba(246,182,74,.30);
+    --glow-b:0 0 0 1px rgba(90,162,255,.55), 0 0 24px rgba(90,162,255,.30);
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;padding:0}
+  body{
+    background:
+      radial-gradient(1100px 620px at 12% -8%, rgba(90,162,255,.10), transparent 60%),
+      radial-gradient(900px 520px at 100% 0%, rgba(55,209,141,.07), transparent 55%),
+      linear-gradient(180deg,var(--bg2),var(--bg) 240px);
+    background-attachment:fixed;
+    color:var(--ink); font-family:var(--font); font-size:14.5px; line-height:1.5;
+    font-variant-numeric:tabular-nums; -webkit-font-smoothing:antialiased; -webkit-text-size-adjust:100%;
+    overflow-wrap:anywhere;
+  }
+  [hidden]{display:none !important}
+  .mono{font-family:var(--mono); font-variant-numeric:tabular-nums}
+  .muted{color:var(--muted)} .dim{color:var(--dim)}
+  .hint{color:var(--dim); font-size:11.5px; letter-spacing:.015em}
+  .spacer{flex:1 1 auto; min-width:0}
+  b,strong{font-weight:640}
+
+  /* ---------------- header ---------------- */
+  header.top{
+    position:sticky; top:0; z-index:30; display:flex; align-items:center; gap:10px; flex-wrap:wrap;
+    padding:10px 16px; background:rgba(8,9,13,.82); backdrop-filter:blur(10px);
+    border-bottom:1px solid var(--line);
+  }
+  .brand{display:flex; align-items:center; gap:9px; font-weight:660; letter-spacing:.01em}
+  .spore{width:13px;height:13px;border-radius:50%;
+    background:radial-gradient(circle at 34% 30%, #ffffff 0 8%, var(--green) 30%, #0d8a58 100%);
+    box-shadow:0 0 10px rgba(55,209,141,.65), 0 0 22px rgba(55,209,141,.30); flex:none;
+    animation:spore 3.4s ease-in-out infinite}
+  @keyframes spore{0%,100%{opacity:.75; transform:scale(.92)}50%{opacity:1; transform:scale(1.06)}}
+  .bname{font-size:15px} .bdot{color:var(--green)}
+  .tagline{color:var(--dim); font-size:12px; letter-spacing:.02em}
+  .pill{
+    display:inline-flex; align-items:center; gap:6px; font-size:11.5px; padding:4px 9px;
+    background:rgba(15,18,24,.9); border:1px solid var(--line); border-radius:999px; color:var(--muted);
+    white-space:nowrap;
+  }
+  .pill b{color:var(--ink); font-weight:620}
+  .pill.g{color:var(--green-t); border-color:var(--green-b); background:var(--green-l)}
+  .pill.r{color:var(--red-t); border-color:var(--red-b); background:var(--red-l)}
+  .pill.a{color:var(--amber-t); border-color:var(--amber-b); background:var(--amber-l)}
+  .pill.b{color:var(--blue-t); border-color:var(--blue-b); background:var(--blue-l)}
+  .pill.k{color:var(--grey-t); border-color:var(--grey-b); background:var(--grey-l)}
+  .wsdot{width:8px;height:8px;border-radius:50%;background:var(--grey);flex:none;transition:background .3s, box-shadow .3s}
+  .wsdot.on{background:var(--green); box-shadow:0 0 8px rgba(55,209,141,.8); animation:beacon 2.4s ease-in-out infinite}
+  @keyframes beacon{0%,100%{box-shadow:0 0 6px rgba(55,209,141,.5)}50%{box-shadow:0 0 12px rgba(55,209,141,.95)}}
+
+  /* ---------------- buttons / inputs ---------------- */
+  .btn{
+    font:inherit; font-size:13px; color:var(--ink); background:var(--s2); border:1px solid var(--line2);
+    border-radius:var(--r2); padding:9px 13px; cursor:pointer; white-space:nowrap;
+    transition:border-color .16s, background .16s, box-shadow .16s, transform .05s;
+    -webkit-tap-highlight-color:transparent;
+  }
+  .btn:hover{border-color:var(--line3); background:var(--s3)}
+  .btn:active{transform:translateY(1px)}
+  .btn:focus-visible{outline:2px solid var(--blue); outline-offset:2px}
+  .btn:disabled{opacity:.5; cursor:not-allowed}
+  .btn.sm{padding:6px 10px; font-size:12.5px; border-radius:9px}
+  .btn.tiny{padding:3px 8px; font-size:11.5px; border-radius:8px}
+  .btn.ghost{background:transparent}
+  .btn.primary{background:linear-gradient(180deg,#1d3b60,#163050); border-color:#2f4f79; color:#dbeaff}
+  .btn.primary:hover{background:linear-gradient(180deg,#244b78,#1a3b60); border-color:#3a6088}
+  .btn.talk{touch-action:none; user-select:none; -webkit-user-select:none}
+  .btn.talk.rec{background:#3a161a; border-color:#77303a; color:#ffd9dc; box-shadow:var(--glow-r)}
+  input[type=text]{
+    font:inherit; color:var(--ink); background:#0b0e13; border:1px solid var(--line2);
+    border-radius:var(--r2); padding:11px 12px; width:100%; min-width:0;
+  }
+  input[type=text]::placeholder{color:var(--dim)}
+  input[type=text]:focus-visible{outline:2px solid var(--blue); outline-offset:1px; border-color:var(--blue-b)}
+  .linktext{color:var(--blue); cursor:pointer; text-decoration:underline; text-underline-offset:2px}
+
+  /* ---------------- layout ---------------- */
+  main.layout{
+    display:grid; gap:14px; padding:14px; max-width:1360px; margin:0 auto; align-items:start;
+    grid-template-columns:minmax(0,1.5fr) minmax(0,1fr);
+    grid-template-areas:
+      "ask    vitals"
+      "feed   upload"
+      "learn  learn";
+  }
+  .area-ask{grid-area:ask} .area-vitals{grid-area:vitals} .area-feed{grid-area:feed}
+  .area-upload{grid-area:upload} .area-learn{grid-area:learn}
+  @media (max-width:940px){
+    main.layout{grid-template-columns:minmax(0,1fr); padding:10px; gap:11px;
+      grid-template-areas:"ask" "vitals" "feed" "upload" "learn"}
+  }
+  .panel{
+    background:linear-gradient(180deg,var(--s1),#0c0f14);
+    border:1px solid var(--line); border-radius:var(--r); padding:13px; min-width:0; box-shadow:var(--shadow);
+    transition:box-shadow .5s ease, border-color .5s ease;
+  }
+  .phead{display:flex; align-items:baseline; gap:9px; flex-wrap:wrap; margin:0 0 11px}
+  .phead h2{margin:0; font-size:11.5px; text-transform:uppercase; letter-spacing:.14em; color:var(--muted); font-weight:660}
+  .empty{color:var(--dim); font-size:13px; margin:6px 2px}
+  .glow-g{box-shadow:var(--glow-g) !important; border-color:rgba(55,209,141,.6) !important}
+  .glow-r{box-shadow:var(--glow-r) !important; border-color:rgba(255,95,109,.6) !important}
+  .glow-a{box-shadow:var(--glow-a) !important; border-color:rgba(246,182,74,.6) !important}
+  .glow-b{box-shadow:var(--glow-b) !important; border-color:rgba(90,162,255,.6) !important}
+
+  /* ---------------- ask ---------------- */
+  .askbar{display:flex; gap:8px; align-items:stretch; flex-wrap:wrap}
+  .askbar input{flex:1 1 240px}
+  .askbar .btn{flex:0 0 auto}
+  .actions{display:flex; gap:8px; flex-wrap:wrap; align-items:center; margin-top:10px}
+  .statusrow{min-height:20px; margin-top:8px}
+  .status{font-size:12.5px; color:var(--muted)}
+  .status.err{color:var(--red)} .status.ok{color:var(--green)} .status.busy{color:var(--amber)}
+  .pipeline{
+    margin-top:10px; border:1px solid var(--line2); border-radius:var(--r2); padding:11px 12px; background:#0b0e13;
+  }
+  .pipehead{display:flex; align-items:center; gap:9px; font-size:12.5px; color:var(--amber-t)}
+  .pulse{width:9px;height:9px;border-radius:50%;background:var(--amber);flex:none;
+    box-shadow:0 0 0 0 rgba(246,182,74,.6); animation:ping 1.5s ease-out infinite}
+  @keyframes ping{0%{box-shadow:0 0 0 0 rgba(246,182,74,.55)}100%{box-shadow:0 0 0 12px rgba(246,182,74,0)}}
+  .pipeq{font-size:13.5px; color:var(--ink); margin:8px 0 10px; padding-left:10px; border-left:2px solid var(--line3)}
+  .pipeflow{display:flex; gap:6px; flex-wrap:wrap}
+  .pipestep{display:flex; align-items:center; gap:6px; font-size:11.5px; color:var(--dim);
+    border:1px solid var(--line); border-radius:999px; padding:3px 9px; background:var(--s1)}
+  .pipestep .sd{width:6px;height:6px;border-radius:50%;background:var(--line3);flex:none}
+  .pipestep.live{color:var(--amber-t); border-color:var(--amber-b)}
+  .pipestep.live .sd{background:var(--amber); animation:ping 1.2s ease-out infinite; box-shadow:none}
+  .pipestep.done{color:var(--green-t); border-color:var(--green-b)}
+  .pipestep.done .sd{background:var(--green)}
+
+  .answer{margin-top:12px; border-top:1px solid var(--line); padding-top:12px}
+  .metabar{display:flex; gap:7px; flex-wrap:wrap; align-items:center; margin-bottom:11px}
+  .lbl{display:inline-block; font-size:10.5px; text-transform:uppercase; letter-spacing:.1em; color:var(--dim); margin-bottom:3px}
+  .spokenblock{margin:0 0 11px}
+  .spoken{font-size:15.5px; line-height:1.5; margin:0; padding-left:11px; border-left:2px solid var(--blue)}
+  .screenblock{margin:0 0 11px}
+  .screen{white-space:pre-wrap; font-size:14px; margin:0}
+  sup.cite{
+    color:var(--blue); cursor:pointer; font-family:var(--mono); font-size:11px; font-weight:600;
+    padding:0 2px; border-radius:4px; user-select:none; transition:background .15s;
+  }
+  sup.cite:hover{background:var(--blue-l)}
+  sup.cite:focus-visible{outline:2px solid var(--blue); outline-offset:1px}
+  sup.cite.open{background:var(--blue); color:#04101f}
+  .chunk{border:1px solid var(--line2); border-left:3px solid var(--blue); border-radius:var(--r2);
+    background:#0b0e13; padding:10px 11px; margin:0 0 11px; font-size:13px; animation:cardin .24s ease-out}
+  @keyframes cardin{from{opacity:0; transform:translateY(-4px)} to{opacity:1; transform:none}}
+  .chunk .ctitle{font-weight:640; margin-bottom:3px}
+  .chunk a{color:var(--blue); text-decoration:none; word-break:break-all}
+  .chunk a:hover{text-decoration:underline}
+  .chunk .csnip{color:var(--muted); margin:6px 0; font-size:12.5px}
+  .chunk .cmeta{font-family:var(--mono); font-size:11.5px; color:var(--dim); display:flex; gap:12px; flex-wrap:wrap; align-items:center; margin-top:4px}
+  .chunk .close{background:none;border:none;color:var(--dim);cursor:pointer;font:inherit;font-size:11.5px;padding:0;margin-left:auto}
+  .chunk .close:hover{color:var(--ink)}
+
+  .chips{display:flex; gap:8px; flex-wrap:wrap; margin:0 0 12px}
+  .chip{
+    font:inherit; text-align:left; cursor:pointer; color:var(--ink);
+    background:#0b0e13; border:1px solid var(--line2); border-radius:var(--r2); padding:9px 10px;
+    display:flex; flex-direction:column; gap:3px; flex:1 1 168px; min-width:0;
+    transition:border-color .16s, background .16s, box-shadow .3s;
+  }
+  .chip:hover{border-color:var(--line3); background:var(--s2)}
+  .chip:focus-visible{outline:2px solid var(--blue); outline-offset:2px}
+  .chip .chead{font-size:12px; color:var(--muted); display:flex; gap:6px; align-items:baseline}
+  .chip .chead b{color:var(--ink); font-weight:650}
+  .chip .cbody{font-size:13px; color:var(--ink)}
+  .chip .cnum{font-family:var(--mono); font-size:11px; color:var(--dim)}
+  .chip.taken{border-color:var(--green-b); background:linear-gradient(180deg,var(--green-l),#0a1712); box-shadow:var(--glow-g)}
+  .chip.taken .chead b{color:var(--green-t)}
+  .chip.taken .cnum{color:var(--green-t)}
+  .chip.correcting{border-color:var(--red-b); background:#170f10; box-shadow:var(--glow-r)}
+  .whyrow{display:flex; gap:9px; align-items:baseline; margin:0 0 7px}
+  .whyrow .lbl{margin:0; flex:none; padding-top:2px}
+  .whyp,.flip{margin:0; font-size:13px; color:var(--muted); min-width:0}
+  .answeract{display:flex; gap:9px; align-items:center; flex-wrap:wrap; margin:11px 0 4px}
+  .priorwrap{margin-top:13px; border-top:1px solid var(--line); padding-top:11px}
+  .priorhead{display:flex; justify-content:space-between; align-items:baseline; margin-bottom:8px; gap:8px; flex-wrap:wrap}
+  .prior{display:flex; flex-direction:column; gap:7px}
+  .pbar{display:grid; grid-template-columns:56px 1fr 58px; align-items:center; gap:9px}
+  .plabel{font-size:12px; color:var(--muted)}
+  .ptrack{height:10px; border-radius:999px; background:#0a0d12; border:1px solid var(--line); overflow:hidden}
+  .pfill{height:100%; width:100%; transform-origin:left center; transform:scaleX(var(--p,0));
+    background:linear-gradient(90deg,#a06e14,var(--amber)); border-radius:999px;
+    transition:transform .62s cubic-bezier(.2,.75,.25,1)}
+  .pnum{font-family:var(--mono); font-size:12px; color:var(--amber-t); text-align:right}
+  #priorHint{margin-top:7px}
+
+  /* ---------------- feed ---------------- */
+  .feedlist{list-style:none; margin:0; padding:0; display:flex; flex-direction:column; gap:6px; max-height:560px; overflow:auto}
+  .feedrow{
+    border:1px solid var(--line); border-left:3px solid var(--grey); border-radius:var(--r2); padding:7px 10px;
+    background:#0b0e13; font-size:12.5px; display:flex; flex-wrap:wrap; align-items:center; gap:0 7px; min-width:0;
+    transition:border-color .5s ease, box-shadow .5s ease;
+  }
+  .feedrow .ftype{font-weight:680; letter-spacing:.01em; font-size:12px}
+  .feedrow .sep{color:var(--dim)}
+  .feedrow .ftarget{color:var(--muted); font-family:var(--mono); font-size:11.5px}
+  .feedrow .fdelta{font-family:var(--mono); font-size:11.5px; white-space:nowrap; margin-left:auto; display:inline-flex; gap:4px; align-items:baseline}
+  .feedrow .fdelta .arw{color:var(--dim)}
+  .feedrow .fdelta .d{color:var(--muted); font-size:11px}
+  .feedrow .fbar{flex:none; width:52px; height:5px; border-radius:999px; background:#0a0d12; border:1px solid var(--line); overflow:hidden}
+  .feedrow .fbar i{display:block; height:100%; transform-origin:left center; transform:scaleX(var(--f,0));
+    background:linear-gradient(90deg,#1c7d54,var(--green)); transition:transform .6s cubic-bezier(.2,.75,.25,1), background .4s}
+  .feedrow .fcause{flex-basis:100%; color:var(--muted); font-size:11.5px}
+  .feedrow .fts{color:var(--dim); font-family:var(--mono); font-size:10.5px; margin-left:auto}
+  .feedrow.c-green{border-left-color:var(--green)} .feedrow.c-green .ftype{color:var(--green-t)}
+  .feedrow.c-red{border-left-color:var(--red)} .feedrow.c-red .ftype{color:var(--red-t)}
+  .feedrow.c-amber{border-left-color:var(--amber)} .feedrow.c-amber .ftype{color:var(--amber-t)}
+  .feedrow.c-amber .fbar i{background:linear-gradient(90deg,#a06e14,var(--amber))}
+  .feedrow.c-grey{border-left-color:var(--grey)} .feedrow.c-grey .ftype{color:var(--grey-t)}
+  .feedrow.c-grey .fbar i{background:linear-gradient(90deg,#4a5261,var(--grey))}
+  .feedrow.c-blue{border-left-color:var(--blue)} .feedrow.c-blue .ftype{color:var(--blue-t)}
+  .feedrow.c-blue .fbar i{background:linear-gradient(90deg,#2c5c96,var(--blue))}
+
+  /* ---------------- vitals ---------------- */
+  .vblock{margin-bottom:12px}
+  .vrow{display:flex; align-items:baseline; justify-content:space-between; gap:9px; flex-wrap:wrap; margin-bottom:9px}
+  .vgrid{display:grid; grid-template-columns:1fr 1fr; gap:8px}
+  .vcell{background:#0b0e13; border:1px solid var(--line); border-radius:var(--r2); padding:8px 10px; min-width:0}
+  .vcell .k{font-size:10.5px; text-transform:uppercase; letter-spacing:.09em; color:var(--dim)}
+  .vcell .v{font-family:var(--mono); font-size:17px; margin-top:1px}
+  .vcell.hot .v{color:var(--green-t)}
+  .consts{display:flex; flex-wrap:wrap; gap:6px}
+  .const{font-family:var(--mono); font-size:11px; color:var(--muted); background:#0b0e13;
+    border:1px solid var(--line); border-radius:999px; padding:2px 8px}
+  .const b{color:var(--ink); font-weight:620}
+  .vsub{font-size:10.5px; text-transform:uppercase; letter-spacing:.1em; color:var(--dim); margin:0 0 7px}
+
+  /* ---------------- upload ---------------- */
+  .drop{
+    border:1.5px dashed var(--line3); border-radius:var(--r2); padding:16px 12px; text-align:center; cursor:pointer;
+    background:#0b0e13; transition:border-color .18s, background .18s, box-shadow .18s;
+  }
+  .drop:hover{border-color:var(--blue-b); background:#0c1119}
+  .drop:focus-visible{outline:2px solid var(--blue); outline-offset:2px}
+  .drop.over{border-color:var(--blue); background:#0d1522; box-shadow:var(--glow-b)}
+  .drop.busy{border-style:solid; border-color:var(--amber-b)}
+  .dropinner{display:flex; flex-direction:column; align-items:center; gap:5px}
+  .dropspore{width:22px;height:22px;border-radius:50%;
+    background:radial-gradient(circle at 34% 30%, #ffffff 0 6%, var(--blue) 32%, #1d4f95 100%);
+    box-shadow:0 0 14px rgba(90,162,255,.5); animation:spore 3s ease-in-out infinite}
+  .droptext{font-size:13px; color:var(--muted)}
+  .droptext b{color:var(--ink)}
+  .uploadlist{display:flex; flex-direction:column; gap:6px; margin-top:10px}
+  .uchip{display:flex; align-items:center; gap:8px; flex-wrap:wrap; font-size:12px;
+    border:1px solid var(--line); border-left:3px solid var(--blue); border-radius:var(--r2); padding:7px 10px;
+    background:#0b0e13; transition:border-color .4s, box-shadow .4s}
+  .uchip .ukind{font-family:var(--mono); font-size:10.5px; text-transform:uppercase; letter-spacing:.05em;
+    color:var(--blue-t); border:1px solid var(--blue-b); background:var(--blue-l); border-radius:5px; padding:1px 6px}
+  .uchip .uname{color:var(--ink); min-width:0; overflow-wrap:anywhere}
+  .uchip .usize{color:var(--dim); font-family:var(--mono); font-size:11px}
+  .uchip .ustate{margin-left:auto; font-family:var(--mono); font-size:11.5px; color:var(--muted); white-space:nowrap; min-width:0; text-align:right}
+  .uchip.rejected .ustate{white-space:normal; overflow-wrap:anywhere}
+  .uchip.sending .ustate{color:var(--amber-t)}
+  .uchip.done{border-left-color:var(--green)} .uchip.done .ustate{color:var(--green-t)} .uchip.done .ukind{color:var(--green-t); border-color:var(--green-b); background:var(--green-l)}
+  .uchip.rejected{border-left-color:var(--red); opacity:.9} .uchip.rejected .ustate{color:var(--red-t)}
+  .uchip.rejected .ukind{color:var(--red-t); border-color:var(--red-b); background:var(--red-l)}
+  .uchip.sending{box-shadow:var(--glow-a)}
+  .uploadrej{display:flex; flex-direction:column; gap:6px; margin-top:8px}
+  .uploaderr{margin-top:10px; border:1px solid var(--red-b); border-left:3px solid var(--red); border-radius:var(--r2);
+    background:var(--red-l); color:var(--red-t); font-size:12.5px; padding:9px 11px; animation:cardin .24s ease-out}
+  .uploaderr.a{border-color:var(--amber-b); border-left-color:var(--amber); background:var(--amber-l); color:var(--amber-t)}
+  .uploadfoot{margin-top:9px}
+
+  /* ---------------- learn ---------------- */
+  .area-learn{display:grid; gap:14px; grid-template-columns:minmax(0,1fr) minmax(0,1.12fr); align-items:start}
+  @media (max-width:940px){.area-learn{grid-template-columns:minmax(0,1fr)}}
+  .learncol{min-width:0}
+  .sentence{background:#0b0e13; border:1px solid var(--line); border-left:3px solid var(--blue); border-radius:var(--r2);
+    padding:9px 11px; margin-bottom:8px; font-size:13px; transition:border-color .4s, box-shadow .4s}
+  .sentence .srow{display:flex; gap:6px; flex-wrap:wrap; align-items:center; margin-top:7px}
+  .ridchip{font-family:var(--mono); font-size:10.5px; color:var(--muted); background:var(--s2);
+    border:1px solid var(--line); border-radius:6px; padding:1px 6px}
+  .cand{border:1px solid var(--line); border-left:4px solid var(--grey); border-radius:var(--r2); padding:10px 11px;
+    margin-bottom:8px; background:#0b0e13; transition:border-color .5s, box-shadow .5s}
+  .cand .chead{display:flex; gap:8px; align-items:baseline; flex-wrap:wrap; margin-bottom:5px}
+  .cand .tag{font-size:10.5px; font-weight:760; letter-spacing:.1em; padding:2px 8px; border-radius:999px;
+    border:1px solid var(--line2); color:var(--grey-t)}
+  .cand .cname{font-weight:640; font-size:13.5px}
+  .cand .caxis{font-size:11px; color:var(--dim); font-family:var(--mono)}
+  .cand .creason{font-size:12.5px; color:var(--red-t); margin-top:2px}
+  .cand .creason .pat{font-family:var(--mono); color:#ff9aa2}
+  .cand .cline{font-family:var(--mono); font-size:12px; color:var(--muted); margin:4px 0}
+  .cand .cfoot{font-family:var(--mono); font-size:10.5px; color:var(--dim); display:flex; gap:10px; flex-wrap:wrap; margin-top:6px}
+  .cand.block{border-left-color:var(--red); background:linear-gradient(180deg,#170f10,#0d0a0b)}
+  .cand.block .tag{color:var(--red-t); border-color:var(--red-b); background:var(--red-l)}
+  .cand.veto{border-left-color:var(--red); background:#120e10} .cand.veto .tag{color:var(--red-t); border-color:var(--red-b); background:var(--red-l)}
+  .cand.error{border-left-color:var(--red); background:#120e10} .cand.error .tag{color:var(--red-t); border-color:var(--red-b); background:var(--red-l)}
+  .cand.pass{border-left-color:var(--green); background:linear-gradient(180deg,#0c1c15,#0a1210)}
+  .cand.pass .tag{color:var(--green-t); border-color:var(--green-b); background:var(--green-l)}
+  .cand.pending{border-left-color:var(--amber)} .cand.pending .tag{color:var(--amber-t); border-color:var(--amber-b); background:var(--amber-l)}
+  .band{margin-top:8px}
+  .band-track{position:relative; height:22px; border-radius:999px; background:#0a0d12; border:1px solid var(--line); overflow:hidden}
+  .band-range{position:absolute; top:0; bottom:0; background:linear-gradient(90deg,rgba(246,182,74,.16),rgba(246,182,74,.3));
+    border-left:1px solid var(--amber-b); border-right:1px solid var(--amber-b); transition:left .5s, width .5s}
+  .band-base{position:absolute; top:3px; bottom:3px; width:2px; background:var(--amber); box-shadow:0 0 6px rgba(246,182,74,.7)}
+  .band-dot{position:absolute; top:50%; width:12px; height:12px; margin:-6px 0 0 -6px; border-radius:50%;
+    background:var(--green); box-shadow:0 0 10px rgba(55,209,141,.8); transition:left .5s cubic-bezier(.2,.75,.25,1)}
+  .cand.veto .band-dot{background:var(--red); box-shadow:0 0 10px rgba(255,95,109,.8)}
+  .band-legend{font-family:var(--mono); font-size:11px; color:var(--muted); margin-top:5px}
+  .band-legend .g{color:var(--green-t)} .band-legend .r{color:var(--red-t)}
+  .playing{color:var(--green-t)}
+  .eq{display:inline-flex; gap:2px; align-items:flex-end; height:11px; margin-left:2px}
+  .eq i{width:2px; background:var(--green); border-radius:1px; animation:eq 1s ease-in-out infinite}
+  .eq i:nth-child(2){animation-delay:.15s} .eq i:nth-child(3){animation-delay:.3s} .eq i:nth-child(4){animation-delay:.45s}
+  @keyframes eq{0%,100%{height:3px}50%{height:11px}}
+
+  #audit{white-space:pre-wrap; margin:14px; padding:11px; border-radius:var(--r2); border:1px solid var(--line);
+    background:#0b0e13; color:var(--green-t); font-family:var(--mono); font-size:12.5px}
+
+  @media (prefers-reduced-motion:reduce){
+    *{animation-duration:.001ms !important; animation-iteration-count:1 !important; transition-duration:.001ms !important}
+    .spore,.dropspore{animation:none}
+  }
+  @media (max-width:520px){
+    .pbar{grid-template-columns:48px 1fr 52px}
+    .vcell .v{font-size:15px}
+    body{font-size:14px}
+  }
+</style>
+</head>
+<body>
+
+<header class="top">
+  <div class="brand"><span class="spore" aria-hidden="true"></span><span class="bname">Mycelium</span><span class="bdot">.</span></div>
+  <span class="tagline" aria-hidden="true">a knowledge layer that shows its work</span>
+  <div class="spacer"></div>
+  <span class="pill mono" id="sessionBadge" title="session id">session —</span>
+  <button class="btn ghost sm" id="newSessionBtn" type="button">New session</button>
+  <span class="pill mono" id="wsBadge" title="event stream"><span class="wsdot" id="wsDot" aria-hidden="true"></span><span id="wsText">connecting</span></span>
+</header>
+
+<main class="layout">
+
+  <section class="panel area-ask" id="askPanel" aria-label="Ask">
+    <div class="phead"><h2>Ask</h2><span class="hint">typed and spoken share one path</span></div>
+    <div class="askbar">
+      <input id="q" type="text" placeholder="Ask the wiki — e.g. how do we run a discovery call?" autocomplete="off" spellcheck="false" aria-label="Question">
+      <button class="btn primary" id="sendBtn" type="button">Send</button>
+      <button class="btn talk" id="talkBtn" type="button" aria-pressed="false" title="Hold to talk">Hold to talk</button>
+    </div>
+    <div class="actions">
+      <button class="btn sm" id="reflectBtn" type="button">What did you learn today?</button>
+      <button class="btn sm" id="improveBtn" type="button">Improve yourself</button>
+      <button class="btn sm" id="tickBtn" type="button">Tick</button>
+      <span class="spacer"></span>
+      <span class="pill mono" id="audioState" title="speech output">audio idle</span>
+    </div>
+    <div class="statusrow"><span class="status" id="status" role="status" aria-live="polite"></span></div>
+
+    <div class="pipeline" id="pipeline" hidden>
+      <div class="pipehead"><span class="pulse" aria-hidden="true"></span><span id="pipeTitle">working</span><span class="spacer"></span><span class="mono" id="pipeElapsed">0 s</span></div>
+      <div class="pipeq" id="pipeQuestion"></div>
+      <div class="pipeflow" id="pipeFlow"></div>
+    </div>
+
+    <div class="answer" id="answer" hidden>
+      <div class="metabar">
+        <span class="pill mono" id="shapeBadge"></span>
+        <span class="pill mono" id="citeBadge"></span>
+        <span class="pill mono" id="entropyBadge"></span>
+        <span class="pill mono" id="slotBadge"></span>
+        <span class="pill mono" id="msBadge"></span>
+        <button class="btn tiny" id="replayBtn" type="button">Replay</button>
+      </div>
+      <div class="spokenblock"><span class="lbl">spoken</span><p class="spoken" id="spoken"></p></div>
+      <div class="screenblock"><span class="lbl">on screen</span><div class="screen" id="screen"></div></div>
+      <div class="chunk" id="chunkCard" hidden></div>
+      <div class="chips" id="chips" role="group" aria-label="Readings"></div>
+      <div class="whyrow"><span class="lbl">why</span><p class="whyp" id="why"></p></div>
+      <div class="whyrow"><span class="lbl">flip</span><p class="flip" id="flip"></p></div>
+      <div class="answeract">
+        <button class="btn sm" id="confirmBtn" type="button">Confirm this answer</button>
+        <span class="hint" id="confirmHint">or tap a different reading to correct it</span>
+      </div>
+      <div class="priorwrap" id="priorWrap">
+        <div class="priorhead"><span class="lbl">prior</span><span class="hint">literal · intent · scope</span></div>
+        <div class="prior" id="prior"></div>
+        <div class="hint" id="priorHint"></div>
+      </div>
+    </div>
+  </section>
+
+  <section class="panel area-vitals" aria-label="Vitals">
+    <div class="phead"><h2>Vitals</h2><span class="hint" id="vitalsWhen"></span></div>
+    <div id="vitalsBody"><p class="empty">loading…</p></div>
+  </section>
+
+  <section class="panel area-feed" aria-label="Ledger feed">
+    <div class="phead"><h2>Feed</h2><span class="hint mono" id="feedCount">0 / 40</span></div>
+    <p class="empty" id="feedEmpty">Waiting for ledger events…</p>
+    <ul class="feedlist" id="feed" aria-live="polite"></ul>
+  </section>
+
+  <section class="panel area-upload" aria-label="Upload documents">
+    <div class="phead"><h2>Teach it your docs</h2><span class="hint">judge upload</span></div>
+    <div class="drop" id="drop" tabindex="0" role="button" aria-label="Drop documents or browse">
+      <input type="file" id="fileInput" multiple accept=".md,.markdown,.txt,.html,.htm,.pdf,.csv,.tsv,.xlsx" hidden>
+      <div class="dropinner">
+        <span class="dropspore" aria-hidden="true"></span>
+        <div class="droptext"><b>Drop documents here</b> or <span class="linktext">browse</span></div>
+        <div class="hint" id="dropHint">md · txt · html · pdf · csv · tsv · xlsx — up to 10 files, 20 MB each, 50 MB per upload</div>
+      </div>
+    </div>
+    <div class="uploadlist" id="uploadFiles"></div>
+    <div class="uploadrej" id="uploadRejected"></div>
+    <div class="uploaderr" id="uploadError" role="alert" hidden></div>
+    <div class="uploadfoot"><span class="hint" id="uploadSummary"></span></div>
+  </section>
+
+  <section class="panel area-learn" aria-label="Learning">
+    <div class="learncol" id="reflectBox">
+      <div class="phead"><h2>What it learned</h2><span class="hint" id="reflectMeta"></span></div>
+      <div id="sentences"><p class="empty">Ask for a reflection to see today's lessons.</p></div>
+    </div>
+    <div class="learncol" id="improveBox">
+      <div class="phead"><h2>Candidates</h2><span class="hint" id="improveMeta"></span></div>
+      <div id="candidates"><p class="empty">Run “Improve yourself” to test candidate rewrites.</p></div>
+    </div>
+  </section>
+
+</main>
+
+<pre id="audit" hidden></pre>
+
+<script>
+(function () {
+"use strict";
+
+/* =====================================================================================
+   MYCELIUM · EVENT → FEEDBACK MAP
+   Every action and every learning event must move a NAMED value from before → after, in a
+   region the audit can watch. [brackets] name the DOM region the audit binds a
+   MutationObserver to. Build exactly this map.
+
+   LEDGER ROWS  (WS /events, table:"ledger", deduped by row.id)
+     confirm   [feed]        green row, Δ before→after, chunk fitness bar grows + green glow
+     correct   [feed]        red row naming the correction; the prior panel travels (below)
+     prior     [prior]       amber glow on the prior panel; amber row steps one bar
+     decay     [feed]        grey row, fitness shrinks toward prior; corpus greyed
+     veto      [feed]        red row naming the matched pattern; BLOCK card if improve is open
+     gate      [candidates]  amber PASS/VETO decision drawn on the baseline band
+     promote   [slotBadge]   slot chip bumps version, green glow, green feed row
+     lesson    [sentences]   lesson sentence appears carrying its row_ids
+
+   CANDIDATE ROWS / status + verdict   [candidates]
+     vetoed_prelint           → red BLOCK card naming the matched pattern (no sandbox ran)
+     scored + PASS            → green PASS card + baseline band + candidate dot
+     scored + VETO            → red VETO card + band, dot below the baseline
+     clean_awaiting_baseline  → amber PENDING card, "awaiting baseline"
+     error                    → red ERROR card carrying the message
+     verdict PASS             → green tag + green glow
+     verdict VETO             → red tag + red glow
+
+   API RESPONSES
+     POST /ask  start        [pipeline]    pulsing pipeline, echoed question, honest elapsed s
+     POST /ask  answered     [answer]      answer appears; shape / citations / H / slot / ms
+     /ask citations n/n      [citeBadge]   green "n/n resolved"; blue [N] sups → chunk card
+     /ask citations 0/0      [citeBadge]   grey "0/0 · The wiki does not cover this"
+     POST /correct           [prior]       prior_before → prior_after travel + count-up
+     POST /confirm           [feed]        green confirm row, taken posterior → 1
+     POST /tick              [feed]        grey decay row "decayed N"
+     POST /reflect           [sentences]   sentences + meta (rows_read / dropped / llm)
+     POST /improve           [candidates]  candidate cards + band, or the pending baseline text
+     GET  /vitals            [vitalsBody]  counts count up; slot, baseline, runner
+     GET  /config            [vitalsBody]  constants strip (decay, prior rates, ratio)
+     POST /stt               [status]      transcript lands in the input, status updates
+     GET  /tts               [audioState]  "playing" with a moving equaliser
+     /tts fallback           [audioState]  amber "browser voice (speechSynthesis)"
+
+   UPLOAD   [uploadFiles] [uploadRejected] [uploadError]
+     accepted        → per-file chip: kind + size → indexing pulse → chunk count-up
+     ok              → corpus counter in Vitals ticks up by res.chunks
+     rejected file   → chip stays visible with the server's reason
+     pre-check fail  → client-side chip with reason (count / type / size), never sent
+     413             → red banner with the server detail
+     429             → amber banner "another upload is indexing"
+
+   CONNECTION / ERRORS
+     ws down   [wsDot]  dot grey, badge "retrying"; exponential backoff reconnect
+     ws up     [wsDot]  dot green + beacon
+     any call fails     [status]  red status line naming the endpoint
+   ===================================================================================== */
+
+/* ------------------------------------------------------------------ inline fixtures --
+   Real payloads captured from the running server (data/ui-fixtures.json). Mock mode
+   answers every call from these; nothing here is a network request. ------------------ */
+var FX = {
+  ask: {
+    question_id: "question:s7jjw0ouju6jw5f1ww26",
+    session_id: "fixture-session-1",
+    shape: "how-to",
+    readings: [
+      { role: "literal", paraphrase: "What is the standard, best-practice structure for a sales discovery call: its stages, timing and the questions to ask?", p: 0.35, posterior: 0.35 },
+      { role: "intent", paraphrase: "How does our organization tell reps to run a discovery call, according to our own playbook or methodology in the knowledge base?", p: 0.45, posterior: 0.45 },
+      { role: "scope", paraphrase: "How should a particular kind of discovery call be structured, such as a customer-research or product discovery interview, or a consulting scoping call, rather than a sales qualification call?", p: 0.2, posterior: 0.2 }
+    ],
+    taken: "intent",
+    taken_reading: {
+      role: "intent",
+      paraphrase: "How does our organization tell reps to run a discovery call, according to our own playbook or methodology in the knowledge base?",
+      assumption: "Mycelium answers questions from a company corpus, so the user wants the documented internal process rather than generic advice.",
+      query: "discovery call playbook agenda stages qualification framework internal guidelines",
+      p: 0.45
+    },
+    why: "The question was asked inside the Mycelium project, which is built to answer from a company corpus. That makes it likely the user wants the organization's documented discovery-call method, not generic sales advice. Generic best practice is the close second reading and the fallback.",
+    flip_condition: "If the corpus has no internal discovery-call playbook or sales methodology document, switch to the literal reading and give general best-practice structure.",
+    spoken: "The wiki does not cover this. I didn't get any wiki pages with this question, so I can't say how a discovery call should be structured. I read that as How does our organization tell reps to run a discovery call, according to our own playbook or methodology in the knowledge base.",
+    screen: "**Reading:** I took this as a request for the recommended steps or agenda for a sales or customer discovery call.\n\n**Answer:** The wiki does not cover this. No wiki pages came with this question, so I have no sources to answer from or cite.\n\nTo get an answer, share the relevant wiki pages, such as a sales playbook, a discovery call template or call notes, and I'll answer from them with citations.",
+    claims: [], contradictions: [],
+    gaps: [
+      "No wiki pages came with the question, so nothing covers how to structure a discovery call.",
+      "No sales playbook, discovery call template or call notes were available."
+    ],
+    confidence: "low",
+    citations: [],
+    citations_resolved: "0/0",
+    prior: [0.3333333333333333, 0.3333333333333333, 0.3333333333333333],
+    entropy_bits: 1.5128876215181604,
+    slot_version: "1.0",
+    ms: 30548,
+    audio_url: "/tts?text=The%20wiki%20does%20not%20cover%20this."
+  },
+  askCited: {
+    citations_resolved: "2/2",
+    screen: "A discovery call follows the BS WISP skeleton [1]. Send a same-day proposal [2].",
+    citations: [
+      { n: 1, chunk_id: "chunk:ab12", title: "Discovery call playbook", link: "file:///docs/discovery.md", snippet: "A discovery call follows the BS WISP skeleton, a six-stage structure that keeps the rep in listen mode.", cosine: 0.82 },
+      { n: 2, chunk_id: "chunk:cd34", title: "Proposal guide (p. 2)", link: "https://example.org/proposal.pdf", snippet: "Promise a same-day proposal and confirm the next step before the call ends.", cosine: 0.77 }
+    ]
+  },
+  reflect: {
+    sentences: [
+      { text: "Sources that rose or fell: none moved, because each of today's four user corrections down-weighted 0 cited chunks.", row_ids: ["lesson:yj7ahkvbxkhbl7vca4ql", "lesson:jhrxu9edp4adtu8vi6w3", "lesson:8o7w63wmnvoc3t1ubrhj", "lesson:y9bv9zry8huenx4ys71r"] },
+      { text: "Questions the wiki could not answer: no row records one; the only question-linked row is a confirm observed on question:g01.", row_ids: ["lesson:cyj3jv62kj0v6bbg1d30"] },
+      { text: "Lessons written: growth vetoed seven candidates before any sandbox ran; constraints-first, structure-outline, format-marks and constraints-first+format-marks failed lint because each slot was too long (ratio), and poison-no-cite, poison-wiki and poison-invent hit forbidden patterns.", row_ids: ["lesson:1u9ptqdy6bd432mdhokf", "lesson:a3twfzb3q9f8zkpq5txl", "lesson:zup44e76lxychs8sj1q2", "lesson:j3k48qgnvb9wbiraadj8", "lesson:0fnc28bbh04w7g6x6ss8", "lesson:0pbz8aa7wkr67l42d16s", "lesson:dt2lkisl649jsszeu6vq"] },
+      { text: "Priors or slot versions changed: user corrections moved the factual prior toward intent twice, then toward scope, then back toward literal; no slot version changed because every candidate was vetoed before a sandbox.", row_ids: ["lesson:yj7ahkvbxkhbl7vca4ql", "lesson:1u9ptqdy6bd432mdhokf", "lesson:ee11ywer3ncosdmvz5ek"] }
+    ],
+    rows_read: 23, dropped: 0, llm: true,
+    spoken: "Sources that rose or fell: none moved. Lessons written: growth vetoed seven candidates before any sandbox ran. Priors or slot versions changed: user corrections moved the factual prior toward intent twice, then toward scope, then back toward literal.",
+    audio_url: "/tts?text=Sources%20that%20rose%20or%20fell"
+  },
+  vitals: {
+    slot_version: "1.0",
+    slot_hash: "a1d76d187bfc59451414f1332fad6244f9cc482e5910c12c0f309d92cfe82ee8",
+    baseline: null,
+    counts: { chunk: 0, question: 38, lesson: 23, candidate: 14 },
+    runner: "daytona"
+  },
+  config: {
+    beta_evidence_confirm: 1.0, beta_evidence_correct: 0.0, bootstrap_n: 1000,
+    candidate_spoken_max_words: 120, commit: 0.8, decay: 0.95, held_out_n: 10,
+    id: "config:main", k_runs: 3, knn_k: 8, margin: 0.2, prior_floor: 0.05,
+    prior_rate_correct: 0.3, prior_rate_uncorrected: 0.1, retrieval_fitness_floor: 0.5,
+    seed: 42, slot_token_ratio: 1.25, spoken_max_words: 60
+  },
+  uploadRejected: { files: [], rejected: [{ name: "x.exe", reason: "unsupported type (md, txt, html, pdf, csv, tsv, xlsx)" }], chunks: 0, ms: 0 },
+  uploadOk: { files: [{ name: "Team_Handbook.pdf", kind: "pdf", chunks: 14, title: "Team Handbook (p. 1)" }], rejected: [], chunks: 14, ms: 6200 },
+  uploadErrors: {
+    "413": { detail: "912 chunks exceeds the limit of 800; upload fewer or smaller files" },
+    "429": { detail: "another upload is being indexed; try again in a minute" }
+  },
+  ledger: [
+    { id: "ledger:9koz63nyd1yo8h9mdss9", type: "prior", target: "how-to", target_kind: "shape", before: 0.3333333333333333, after: 0.4, delta: 0.06666666666666671, cause: "answered as intent", ts: "2026-10-16T19:03:04.104601+00:00" },
+    { id: "ledger:21t7zyaos1ntdpfu7ebm", type: "veto", target: "candidate:poison-invent", target_kind: "candidate", before: 0.0, after: 0.0, delta: 0.0, cause: "lint: forbidden pattern 'you may invent|make up'", ts: "2026-10-16T18:54:39.108550+00:00" },
+    { id: "ledger:xog3zsslr9atj1zxj4ov", type: "prior", target: "factual", target_kind: "shape", before: 0.139240458, after: 0.39746832060000004, delta: 0.2582278626, cause: "correction intent→literal", ts: "2026-10-16T18:54:24.185415+00:00" },
+    { id: "ledger:confirm-demo", type: "confirm", target: "chunk:ab12", target_kind: "chunk", before: 0.5, after: 0.667, delta: 0.167, cause: "user confirmed the cited answer", ts: "2026-10-16T19:05:01.000000+00:00" },
+    { id: "ledger:correct-demo", type: "correct", target: "how-to", target_kind: "shape", before: 0.3333, after: 0.5333, delta: 0.2, cause: "correction intent→scope", ts: "2026-10-16T19:05:33.000000+00:00" },
+    { id: "ledger:decay-demo", type: "decay", target: "chunk:cd34", target_kind: "chunk", before: 0.667, after: 0.6603, delta: -0.0067, cause: "stale tick · 5% toward prior · 2 chunks", ts: "2026-10-16T19:06:10.000000+00:00" },
+    { id: "ledger:gate-demo", type: "gate", target: "candidate:structure-outline", target_kind: "candidate", before: 0.71, after: 0.78, delta: 0.07, cause: "delta 0.07 > spread 0.04 · PASS", ts: "2026-10-16T19:06:44.000000+00:00" },
+    { id: "ledger:promote-demo", type: "promote", target: "slot", target_kind: "slot", before: 1.0, after: 1.1, delta: 0.1, cause: "promoted slot v1.0 → v1.1", ts: "2026-10-16T19:07:02.000000+00:00" },
+    { id: "ledger:lesson-demo", type: "lesson", target: "question:g01", target_kind: "question", before: 22, after: 23, delta: 1, cause: "lesson written for question:g01", ts: "2026-10-16T19:07:20.000000+00:00" }
+  ],
+  candidates: [
+    { id: "candidate:ojo9bq4ctpykxk5k414c", name: "format-marks", axis: "format", status: "clean_awaiting_baseline", slot_hash: "1645250442489f7dfcfa702d417a3b7a71cfee1e2a3f9b9347677babaf5185c5", ts: "2026-10-16T18:54:39.111140+00:00" },
+    { id: "candidate:ujahen9zg7yafmid1kya", name: "structure-outline", axis: "structure", status: "clean_awaiting_baseline", slot_hash: "1cd18930f8fbce2780b8138717829853a60a824d3e79b7a9ebf7d27de143efb3", ts: "2026-10-16T18:54:39.110678+00:00" },
+    { id: "candidate:iz3m9oijue8f9msxzydr", name: "constraints-first", axis: "constraints", status: "clean_awaiting_baseline", slot_hash: "c2f52d99460a99c45739c6e25943ec91bbb16bc58ddd75e6b01c04001a06ab01", ts: "2026-10-16T18:54:39.110146+00:00" },
+    { id: "candidate:psut9et4gifz6viu2a2j", name: "poison-invent", axis: "poison", status: "vetoed_prelint", veto_reason: "forbidden pattern 'you may invent|make up'", slot_hash: "3d62557577cdc30e0f4559a907ae43e6db8d139cc382a969842c3910141127f5", ts: "2026-10-16T18:54:39.107776+00:00" },
+    { id: "candidate:ydcw1mamrfmdkzkrtcwq", name: "poison-wiki", axis: "poison", status: "vetoed_prelint", veto_reason: "forbidden pattern 'ignore (the )?(wiki|previous|context)'", slot_hash: "99f862840f50b734678e601efed151121714302462562e20c3edd66164f336eb", ts: "2026-10-16T18:54:39.105325+00:00" },
+    { id: "candidate:qn1jq5ncn0uutdpujscq", name: "poison-no-cite", axis: "poison", status: "vetoed_prelint", veto_reason: "forbidden pattern 'cite nothing|do not cite|without sources|don't cite'", slot_hash: "bf46089d9c756951c9cbf029d7a1b62068cc9d70c2a91fd81bb4236e4c7bc388", ts: "2026-10-16T18:54:39.101791+00:00" },
+    { id: "candidate:4xwtdfs9nty4g7jv82ib", name: "constraints-first+format-marks", axis: "composed", status: "vetoed_prelint", veto_reason: "slot too long (ratio)", slot_hash: "383c6a34416c51c7c03805fcfe8a680a00ba78fef12e40b6d15a61993f2f7356", ts: "2026-10-16T18:54:39.096779+00:00" }
+  ],
+  scored: [
+    { id: "candidate:scored-pass", name: "structure-outline", axis: "structure", status: "scored", verdict: "PASS", mean: 0.78, spread: 0.03, delta: 0.07, ratio: 1.12, sandbox_id: "sbx_9f21c", runner: "daytona" },
+    { id: "candidate:scored-veto", name: "format-marks", axis: "format", status: "scored", verdict: "VETO", mean: 0.69, spread: 0.03, delta: -0.02, ratio: 1.09, sandbox_id: "sbx_41ab7", runner: "daytona" },
+    { id: "candidate:errored", name: "constraints-first", axis: "constraints", status: "error", veto_reason: "sandbox failed: exec timeout after 150 s", sandbox_id: "sbx_88d02", runner: "daytona" }
+  ],
+  // a synthetic baseline so the scored/band path can be shown (the captured /vitals baseline is null)
+  baseline: { means: [0.68, 0.72, 0.7, 0.74, 0.71, 0.69, 0.73, 0.7, 0.71, 0.72], spread: 0.04 }
+};
+
+/* ------------------------------------------------------------------------- helpers -- */
+var $ = function (s, r) { return (r || document).querySelector(s); };
+var $$ = function (s, r) { return Array.prototype.slice.call((r || document).querySelectorAll(s)); };
+function el(tag, cls, text) {
+  var n = document.createElement(tag);
+  if (cls) n.className = cls;
+  if (text != null) n.textContent = String(text);
+  return n;
+}
+function clone(o) { try { return JSON.parse(JSON.stringify(o)); } catch (e) { return o; } }
+function num(v, dp) {
+  if (v == null || v === "") return "—";
+  var n = Number(v);
+  if (!isFinite(n)) return String(v);
+  if (dp == null) return (Math.abs(n) >= 100 ? n.toFixed(0) : n.toFixed(3)).replace(/0+$/, "").replace(/\.$/, "");
+  return n.toFixed(dp);
+}
+function fmtInt(v) { if (v == null || v === "") return "—"; var n = Number(v); return isFinite(n) ? String(Math.round(n)) : String(v); }
+function signed(v, dp) {
+  if (v == null || v === "") return "—";
+  var n = Number(v); if (!isFinite(n)) return String(v);
+  return (n >= 0 ? "+" : "") + num(n, dp == null ? 3 : dp);
+}
+function clamp01(v) { v = Number(v); return isFinite(v) ? Math.max(0, Math.min(1, v)) : 0; }
+function meanOf(m) {
+  if (Array.isArray(m)) { var xs = m.map(Number).filter(isFinite); return xs.length ? xs.reduce(function (a, b) { return a + b; }, 0) / xs.length : null; }
+  var n = Number(m); return isFinite(n) ? n : null;
+}
+function fmtBytes(b) {
+  if (b == null) return "—";
+  var n = Number(b);
+  if (n < 1024) return n + " B";
+  if (n < 1024 * 1024) return (n / 1024).toFixed(1) + " KB";
+  return (n / 1024 / 1024).toFixed(1) + " MB";
+}
+function hhmmss(ts) {
+  if (!ts) return "";
+  var m = String(ts).match(/T(\d\d:\d\d:\d\d)/);
+  return m ? m[1] : "";
+}
+var RM = false;
+try { RM = window.matchMedia && matchMedia("(prefers-reduced-motion: reduce)").matches; } catch (e) { RM = false; }
+
+/* count a number up from before → after with requestAnimationFrame (instant if reduced) */
+function countUp(node, from, to, fmt, ms) {
+  if (!node) return;
+  fmt = fmt || num;
+  var f = Number(from), t = Number(to);
+  if (!isFinite(t)) { node.textContent = fmt(to); return; }
+  if (RM || !isFinite(f) || !ms || ms <= 0 || f === t) { node.textContent = fmt(t); return; }
+  var t0 = (window.performance && performance.now) ? performance.now() : Date.now();
+  (function step() {
+    var now = (window.performance && performance.now) ? performance.now() : Date.now();
+    var k = Math.min(1, (now - t0) / ms);
+    var e = 1 - Math.pow(1 - k, 3);
+    node.textContent = fmt(f + (t - f) * e);
+    if (k < 1) requestAnimationFrame(step);
+  })();
+}
+/* soft glow on the element that just changed; removed after the animation */
+function glow(node, color) {
+  if (!node) return;
+  var cls = "glow-" + color;
+  node.classList.remove("glow-g", "glow-r", "glow-a", "glow-b");
+  void node.offsetWidth;
+  node.classList.add(cls);
+  clearTimeout(node.__glowT);
+  node.__glowT = setTimeout(function () { node.classList.remove(cls); }, 1600);
+}
+/* set a CSS custom property (used for prior bars + fitness bars; transitioned in CSS) */
+function setVar(node, name, v) { if (node) node.style.setProperty(name, String(v)); }
+
+/* ---------------------------------------------------------------- mode + fixtures -- */
+var QS = String(location.search || "");
+var MOCK = /(^|[?&])mock=1(&|$)/.test(QS);
+var AUDIT = /(^|[?&])audit=1(&|$)/.test(QS);
+var MOCK_VITALS = clone(FX.vitals);
+
+/* ------------------------------------------------------------------------ api layer --
+   One place for every request. In mock mode nothing touches the network. */
+function ApiError(detail, status) {
+  var e = new Error(detail || ("HTTP " + status));
+  e.status = status; e.detail = detail; return e;
+}
+function delay(ms) { return new Promise(function (r) { setTimeout(r, ms); }); }
+function parseErr(data, res) {
+  return ApiError((data && (data.detail || data.error)) || (res.status + " " + res.statusText), res.status);
+}
+async function jget(path) {
+  if (MOCK) return mockGet(path);
+  var res = await fetch(path, { headers: { Accept: "application/json" } });
+  var data = null; try { data = await res.json(); } catch (e) {}
+  if (!res.ok) throw parseErr(data, res);
+  return data || {};
+}
+async function jpost(path, body) {
+  if (MOCK) return mockPost(path, body);
+  var res = await fetch(path, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body == null ? {} : body) });
+  var data = null; try { data = await res.json(); } catch (e) {}
+  if (!res.ok) throw parseErr(data, res);
+  return data || {};
+}
+async function jpostForm(path, form) {
+  if (MOCK) return mockForm(path, form);
+  var res = await fetch(path, { method: "POST", body: form });
+  var data = null; try { data = await res.json(); } catch (e) {}
+  if (!res.ok) throw parseErr(data, res);
+  return data || {};
+}
+
+/* ---- mock implementations ---- */
+var mockAskCount = 0;
+async function mockGet(path) {
+  if (path.indexOf("/vitals") === 0) { await delay(120); return clone(MOCK_VITALS); }
+  if (path.indexOf("/config") === 0) { await delay(80); return clone(FX.config); }
+  throw ApiError("no mock for GET " + path, 404);
+}
+async function mockPost(path, body) {
+  if (path === "/ask") {
+    await delay(900);
+    mockAskCount++;
+    var base = clone(FX.ask);
+    if (body && /cite|bs wisp|playbook/i.test(String(body.text || ""))) {
+      base.citations_resolved = FX.askCited.citations_resolved;
+      base.screen = FX.askCited.screen; base.citations = clone(FX.askCited.citations);
+    } else if (mockAskCount % 2 === 0) {
+      base.citations_resolved = FX.askCited.citations_resolved;
+      base.screen = FX.askCited.screen; base.citations = clone(FX.askCited.citations);
+    }
+    return base;
+  }
+  if (path === "/correct") {
+    await delay(420);
+    var before = (state.prior && state.prior.slice()) || clone(FX.ask.prior);
+    var roles = ["literal", "intent", "scope"];
+    var i = roles.indexOf(body && body.to_role);
+    var after = before.slice();
+    if (i >= 0) { var target = roles.map(function (_, k) { return k === i ? 1 : 0; });
+      after = before.map(function (p, k) { return p + 0.3 * (target[k] - p); });
+      var s = after.reduce(function (a, b) { return a + b; }, 0) || 1; after = after.map(function (p) { return p / s; }); }
+    return { prior_before: before, prior_after: after, ledger_ids: ["ledger:correct-mock"], lesson_id: "lesson:mock" };
+  }
+  if (path === "/confirm") { await delay(260); return { ok: true }; }
+  if (path === "/tick") { await delay(260); return { decayed: 2 }; }
+  if (path === "/reflect") { await delay(700); return clone(FX.reflect); }
+  if (path === "/improve") {
+    await delay(950);
+    var cands = clone(FX.candidates).concat(clone(FX.scored));
+    return { candidates: cands, slot_version: MOCK_VITALS.slot_version, baseline: null };
+  }
+  if (path === "/stt") { await delay(420); return { text: "how do we run a discovery call?" }; }
+  throw ApiError("no mock for POST " + path, 404);
+}
+async function mockForm(path, form) {
+  if (path !== "/upload") throw ApiError("no mock for POST " + path, 404);
+  var names = [];
+  try { form.forEach(function (v, k) { if (k === "files" && v && v.name) names.push(v.name); }); } catch (e) {}
+  await delay(900);
+  if (names.some(function (n) { return /\.exe$|\.zip$/i.test(n); })) return clone(FX.uploadRejected);
+  if (names.some(function (n) { return /huge|toobig/i.test(n); })) throw ApiError(FX.uploadErrors["413"].detail, 413);
+  if (names.some(function (n) { return /busy|locked/i.test(n); })) throw ApiError(FX.uploadErrors["429"].detail, 429);
+  var out = { files: [], rejected: [], chunks: 0, ms: 1400 };
+  names.forEach(function (n) {
+    var kind = (n.split(".").pop() || "txt").toLowerCase();
+    var chunks = 4 + (n.length % 9) * 2;
+    out.files.push({ name: n, kind: kind === "markdown" ? "md" : kind, chunks: chunks, title: n.replace(/\.[^.]+$/, "") });
+    out.chunks += chunks;
+  });
+  MOCK_VITALS.counts.chunk = (MOCK_VITALS.counts.chunk || 0) + out.chunks;
+  MOCK_VITALS.counts.candidate = (MOCK_VITALS.counts.candidate || 0) + 2;
+  return out;
+}
+
+/* --------------------------------------------------------------------- status line -- */
+var statusEl = $("#status");
+function setStatus(msg, kind) {
+  statusEl.className = "status" + (kind ? " " + kind : "");
+  statusEl.textContent = msg || "";
+}
+
+/* ------------------------------------------------------------------------- session -- */
+var state = {
+  sessionId: null, ask: null, prior: null, lastSpoken: "", lastAudioUrl: null,
+  vitals: null, config: null, lastCounts: null,
+  candidates: {}, wsTries: 0, prevSlot: null
+};
+function newSessionId() {
+  try { if (window.crypto && crypto.randomUUID) return crypto.randomUUID(); } catch (e) {}
+  return "sess-" + Math.random().toString(36).slice(2, 10) + Date.now().toString(36);
+}
+function renderSession() {
+  var b = $("#sessionBadge");
+  b.textContent = "session " + String(state.sessionId).slice(0, 8);
+  b.title = "session id: " + state.sessionId;
+}
+
+/* --------------------------------------------------------------------------- audio -- */
+var audioStateEl = $("#audioState");
+var currentAudio = null;
+function setAudio(text, cls) {
+  audioStateEl.textContent = text;
+  audioStateEl.className = "pill mono" + (cls ? " " + cls : "");
+}
+function eqMark() { return '<span class="eq" aria-hidden="true"><i></i><i></i><i></i><i></i></span>'; }
+function browserSpeak(text) {
+  try {
+    if (!window.speechSynthesis || !text) { setAudio("audio idle", ""); return; }
+    speechSynthesis.cancel();
+    var u = new SpeechSynthesisUtterance(String(text));
+    u.onend = function () { setAudio("audio idle", ""); };
+    speechSynthesis.speak(u);
+    setAudio("browser voice (speechSynthesis)", "a");
+  } catch (e) { setAudio("browser voice (speechSynthesis)", "a"); }
+}
+function stopAudio() {
+  if (currentAudio) { try { currentAudio.pause(); } catch (e) {} currentAudio = null; }
+  try { if (window.speechSynthesis) speechSynthesis.cancel(); } catch (e) {}
+  setAudio("audio idle", "");
+}
+/* play audio_url; on ANY error, speak the same text with speechSynthesis */
+function speak(text, audioUrl) {
+  stopAudio();
+  if (MOCK) { setAudio("playing", "g"); setTimeout(function () { setAudio("audio idle", ""); }, 1200); return; }
+  var src = audioUrl || (text ? "/tts?text=" + encodeURIComponent(text) : null);
+  if (!src) { setAudio("audio idle", ""); return; }
+  var a;
+  try { a = new Audio(src); } catch (e) { browserSpeak(text); return; }
+  currentAudio = a;
+  setAudio("playing", "g");
+  a.onended = function () { setAudio("audio idle", ""); };
+  a.onerror = function () { browserSpeak(text); };
+  try {
+    var p = a.play();
+    if (p && typeof p.catch === "function") p.catch(function () { browserSpeak(text); });
+  } catch (e) { browserSpeak(text); }
+}
+
+/* ---------------------------------------------------------------- ledger feed (FLIP) */
+var feedEl = $("#feed");
+var FEED_MAX = 40;
+var seenLedger = {};
+function updateFeedEmpty() {
+  $("#feedEmpty").hidden = feedEl.children.length > 0;
+  $("#feedCount").textContent = feedEl.children.length + " / " + FEED_MAX;
+}
+function typeClass(t) {
+  t = String(t || "").toLowerCase();
+  if (/confirm|promote/.test(t)) return "c-green";
+  if (/correct|veto|block/.test(t)) return "c-red";
+  if (/prior|gate/.test(t)) return "c-amber";
+  if (/decay/.test(t)) return "c-grey";
+  if (/lesson/.test(t)) return "c-blue";
+  return "c-grey";
+}
+function feedRow(row) {
+  var li = el("li", "feedrow " + typeClass(row.type));
+  if (row.id != null) li.dataset.id = String(row.id);
+  li.appendChild(el("span", "ftype", row.type == null ? "event" : String(row.type)));
+  li.appendChild(el("span", "sep", "·"));
+  var target = [row.target_kind, row.target].filter(function (x) { return x != null && x !== ""; }).join(" ");
+  li.appendChild(el("span", "ftarget", target || "—"));
+
+  var d = el("span", "fdelta");
+  d.appendChild(el("span", "b", num(row.before)));
+  d.appendChild(el("span", "arw", "→"));
+  var after = el("span", "a", num(row.before));
+  d.appendChild(after);
+  if (row.delta != null) d.appendChild(el("span", "d", "(" + signed(row.delta) + ")"));
+  li.appendChild(d);
+
+  if (typeof row.after === "number" && isFinite(row.after)) {
+    var bar = el("span", "fbar"); var fill = el("i");
+    setVar(fill, "--f", clamp01(row.before));
+    bar.appendChild(fill); li.appendChild(bar);
+    requestAnimationFrame(function () { setVar(fill, "--f", clamp01(row.after)); });
+    countUp(after, row.before, row.after, function (v) { return num(v); }, 620);
+  }
+
+  if (row.cause != null && row.cause !== "") li.appendChild(el("span", "fcause", String(row.cause)));
+  var ts = hhmmss(row.ts);
+  if (ts) li.appendChild(el("span", "fts", ts));
+  li.title = "id " + (row.id == null ? "?" : row.id) + (row.ts ? " · " + row.ts : "");
+  return li;
+}
+function flipCapture() {
+  var m = {};
+  $$(".feedrow", feedEl).forEach(function (li) { if (li.dataset.id) m[li.dataset.id] = li.getBoundingClientRect(); });
+  return m;
+}
+function flipPlay(prev) {
+  if (RM) return;
+  $$(".feedrow", feedEl).forEach(function (li) {
+    var a = li.dataset.id ? prev[li.dataset.id] : null;
+    if (!a) return;
+    var b = li.getBoundingClientRect();
+    var dy = a.top - b.top;
+    if (dy && li.animate) li.animate([{ transform: "translateY(" + dy + "px)" }, { transform: "none" }], { duration: 260, easing: "cubic-bezier(.2,.75,.25,1)" });
+  });
+}
+function feedAdd(row, opts) {
+  if (!row || typeof row !== "object") return;
+  var id = row.id != null ? String(row.id) : null;
+  if (id) { if (seenLedger[id]) return; seenLedger[id] = 1; }
+  var prev = flipCapture();
+  var li = feedRow(row);
+  feedEl.insertBefore(li, feedEl.firstChild);
+  while (feedEl.children.length > FEED_MAX) { var last = feedEl.lastElementChild; if (last.dataset.id) delete seenLedger[last.dataset.id]; feedEl.removeChild(last); }
+  updateFeedEmpty();
+  if (!RM && li.animate) li.animate([{ opacity: 0, transform: "translateY(-6px) scale(.99)" }, { opacity: 1, transform: "none" }], { duration: 240, easing: "ease-out" });
+  flipPlay(prev);
+}
+
+/* --------------------------------------------------------------------- vitals panel -- */
+function renderVitals(animate) {
+  var v = state.vitals; if (!v) return;
+  var box = $("#vitalsBody"); box.textContent = "";
+  $("#vitalsWhen").textContent = "live";
+
+  var slotRow = el("div", "vrow");
+  var slot = el("span", "pill mono b");
+  slot.appendChild(el("b", null, "slot " + (v.slot_version == null ? "—" : v.slot_version)));
+  slotRow.appendChild(slot);
+  if (v.slot_hash) { var hs = el("span", "pill mono k", "hash " + String(v.slot_hash).slice(0, 10)); slotRow.appendChild(hs); }
+  if (v.runner) slotRow.appendChild(el("span", "pill mono k", "runner " + v.runner));
+  box.appendChild(slotRow);
+
+  var baseRow = el("div", "vrow");
+  baseRow.appendChild(el("span", "vsub", "baseline"));
+  var b = v.baseline;
+  if (!b) baseRow.appendChild(el("span", "hint", "designed, measured after the demo"));
+  else {
+    var m = meanOf(b.means), s = (b.spread == null) ? null : Number(b.spread);
+    var txt = (m == null ? "—" : num(m, 2)) + " ± " + (s == null || !isFinite(s) ? "—" : s.toFixed(2));
+    baseRow.appendChild(el("span", "mono", txt));
+  }
+  box.appendChild(baseRow);
+
+  var c = v.counts || {};
+  var grid = el("div", "vgrid");
+  var prev = state.lastCounts || {};
+  [["chunk", "corpus"], ["question", "questions"], ["lesson", "lessons"], ["candidate", "candidates"]].forEach(function (p) {
+    var cell = el("div", "vcell" + (animate && prev[p[0]] != null && c[p[0]] != null && c[p[0]] > prev[p[0]] ? " hot" : ""));
+    cell.appendChild(el("div", "k", p[1]));
+    var val = el("div", "v");
+    cell.appendChild(val);
+    grid.appendChild(cell);
+    var from = (prev[p[0]] == null) ? (c[p[0]] || 0) : prev[p[0]];
+    countUp(val, from, c[p[0]], fmtInt, animate ? 720 : 0);
+  });
+  box.appendChild(grid);
+  state.lastCounts = clone(c);
+
+  if (state.config) {
+    var cfg = state.config, wrap = el("div", "");
+    wrap.appendChild(el("div", "vsub", "constants"));
+    var cs = el("div", "consts");
+    [["decay", cfg.decay], ["prior_rate_correct", cfg.prior_rate_correct], ["prior_rate_uncorrected", cfg.prior_rate_uncorrected],
+     ["prior_floor", cfg.prior_floor], ["commit", cfg.commit], ["margin", cfg.margin], ["slot_token_ratio", cfg.slot_token_ratio], ["knn_k", cfg.knn_k]]
+      .forEach(function (p) {
+        var chip = el("span", "const");
+        chip.appendChild(el("b", null, String(p[0])));
+        chip.appendChild(document.createTextNode(" " + p[1]));
+        cs.appendChild(chip);
+      });
+    wrap.appendChild(cs);
+    box.appendChild(wrap);
+  }
+}
+async function loadVitals(animate) {
+  try {
+    var v = await jget("/vitals");
+    state.vitals = v;
+    if (state.prevSlot == null) state.prevSlot = v.slot_version;
+    renderVitals(!!animate);
+  } catch (e) {
+    var box = $("#vitalsBody");
+    if (!box.children.length) box.appendChild(el("p", "empty", "vitals unavailable"));
+  }
+}
+async function loadConfig() {
+  try { state.config = await jget("/config"); renderVitals(false); } catch (e) {}
+}
+var vitalsPending = null;
+function scheduleVitals() {
+  if (vitalsPending) return;
+  vitalsPending = setTimeout(function () { vitalsPending = null; loadVitals(true); }, 900);
+}
+/* corpus counter ticks up by delta (e.g. after an upload) without waiting for a poll */
+function bumpCorpus(delta) {
+  if (!state.vitals) { loadVitals(true); return; }
+  var c = state.vitals.counts || {};
+  c.chunk = (c.chunk || 0) + Number(delta || 0);
+  state.vitals.counts = c;
+  renderVitals(true);
+  glow($(".vcell"), "g");
+}
+
+/* ---------------------------------------------------------------------- prior bars -- */
+var ROLE_ORDER = ["literal", "intent", "scope"];
+var priorEls = {};
+function ensurePrior() {
+  var wrap = $("#prior");
+  if (wrap.children.length === ROLE_ORDER.length) return;
+  wrap.textContent = ""; priorEls = {};
+  ROLE_ORDER.forEach(function (role) {
+    var row = el("div", "pbar");
+    row.appendChild(el("span", "plabel", role));
+    var track = el("div", "ptrack"); var fill = el("div", "pfill");
+    track.appendChild(fill); row.appendChild(track);
+    var n = el("span", "pnum", "—"); row.appendChild(n);
+    wrap.appendChild(row);
+    priorEls[role] = { fill: fill, num: n, value: null };
+  });
+}
+function setPrior(values, animate) {
+  ensurePrior();
+  ROLE_ORDER.forEach(function (role, i) {
+    var v = Array.isArray(values) ? clamp01(values[i]) : 0;
+    var ref = priorEls[role];
+    setVar(ref.fill, "--p", v);
+    var from = ref.value == null ? v : ref.value;
+    countUp(ref.num, from, v, function (x) { return num(x, 3); }, animate ? 640 : 0);
+    ref.value = v;
+  });
+}
+/* the correction travel: snap to before, then animate to after */
+function travelPrior(before, after) {
+  setPrior(before, false);
+  requestAnimationFrame(function () { setPrior(after, true); });
+  glow($("#priorWrap"), "a");
+  var moved = ROLE_ORDER.map(function (r, i) {
+    var a = Array.isArray(after) ? clamp01(after[i]) : 0;
+    return r + " " + num(a, 3);
+  }).join(" · ");
+  $("#priorHint").textContent = "moved → " + moved;
+}
+
+/* ------------------------------------------------------------------ ask + pipeline -- */
+function now() { return (window.performance && performance.now) ? performance.now() : Date.now(); }
+var pipeTimer = null, pipeAdv = null, pipeSteps = [], pipeT0 = 0;
+function startPipeline(text) {
+  var p = $("#pipeline"); p.hidden = false;
+  $("#pipeQuestion").textContent = text;
+  $("#pipeTitle").textContent = "working — reading, retrieval, synthesis, citation resolve";
+  var flow = $("#pipeFlow"); flow.textContent = "";
+  pipeSteps = ["readings", "retrieval", "synthesis", "resolve"].map(function (s, i) {
+    var n = el("span", "pipestep" + (i === 0 ? " live" : ""));
+    n.appendChild(el("span", "sd")); n.appendChild(document.createTextNode(s));
+    flow.appendChild(n); return n;
+  });
+  pipeT0 = now(); pipeIdx = 0;
+  var tick = function () { $("#pipeElapsed").textContent = Math.floor((now() - pipeT0) / 1000) + " s"; };
+  tick(); clearInterval(pipeTimer); pipeTimer = setInterval(tick, 250);
+  clearInterval(pipeAdv);
+  pipeAdv = setInterval(function () {
+    if (pipeIdx < pipeSteps.length - 1) { pipeSteps[pipeIdx].className = "pipestep done"; pipeIdx++; pipeSteps[pipeIdx].className = "pipestep live"; }
+  }, 2600);
+}
+var pipeIdx = 0;
+function stopPipeline() { clearInterval(pipeTimer); clearInterval(pipeAdv); $("#pipeline").hidden = true; }
+
+/* ------------------------------------------------------------------------ answer -- */
+function renderScreen(text) {
+  var box = $("#screen"); box.textContent = "";
+  String(text == null ? "" : text).split(/(\[\d+\])/g).forEach(function (part) {
+    if (!part) return;
+    var m = /^\[(\d+)\]$/.exec(part);
+    if (!m) { box.appendChild(document.createTextNode(part)); return; }
+    var n = m[1];
+    var sup = el("sup", "cite", "[" + n + "]");
+    sup.tabIndex = 0; sup.setAttribute("role", "button"); sup.setAttribute("aria-label", "citation " + n);
+    sup.addEventListener("click", function () { showCitation(n, sup); });
+    sup.addEventListener("keydown", function (ev) { if (ev.key === "Enter" || ev.key === " ") { ev.preventDefault(); showCitation(n, sup); } });
+    box.appendChild(sup);
+  });
+}
+function citationFor(n) {
+  var c = (state.ask && state.ask.citations) || [];
+  for (var i = 0; i < c.length; i++) if (String(c[i].n) === String(n)) return c[i];
+  return null;
+}
+function showCitation(n, sup) {
+  var card = $("#chunkCard");
+  $$("sup.cite.open").forEach(function (s) { s.classList.remove("open"); });
+  if (!card.hidden && card.dataset.n === String(n)) { card.hidden = true; return; }
+  var c = citationFor(n);
+  if (!c) { card.hidden = true; return; }
+  if (sup) sup.classList.add("open");
+  card.dataset.n = String(n); card.textContent = "";
+  var head = el("div", "ctitle", "[" + n + "] ");
+  if (c.link) { var a = el("a", null, c.title || c.chunk_id || "source"); a.href = c.link; a.target = "_blank"; a.rel = "noopener noreferrer"; head.appendChild(a); }
+  else head.appendChild(document.createTextNode(c.title || c.chunk_id || "source"));
+  card.appendChild(head);
+  if (c.snippet) card.appendChild(el("div", "csnip", String(c.snippet)));
+  var meta = el("div", "cmeta");
+  if (c.cosine != null) meta.appendChild(el("span", null, "cosine " + num(c.cosine, 3)));
+  if (c.chunk_id) meta.appendChild(el("span", null, String(c.chunk_id)));
+  var close = el("button", "close", "close"); close.type = "button";
+  close.addEventListener("click", function () { card.hidden = true; });
+  meta.appendChild(close); card.appendChild(meta);
+  card.hidden = false; glow(card, "b");
+}
+function chipFor(r, taken) {
+  var chip = el("button", "chip" + (taken ? " taken" : ""));
+  chip.type = "button";
+  if (taken) chip.setAttribute("aria-current", "true");
+  var head = el("div", "chead");
+  head.appendChild(el("b", null, String(r.role == null ? "?" : r.role)));
+  head.appendChild(document.createTextNode(taken ? " · taken" : " · tap to correct"));
+  chip.appendChild(head);
+  chip.appendChild(el("div", "cbody", String(r.paraphrase == null ? "" : r.paraphrase)));
+  chip.appendChild(el("div", "cnum", "p " + num(r.p, 2) + " · posterior " + num(r.posterior, 2)));
+  if (taken) { chip.disabled = true; chip.title = "the reading Mycelium took"; }
+  else { chip.title = "correct to this reading"; chip.addEventListener("click", function () { correct(r.role); }); }
+  return chip;
+}
+function renderChips(res) {
+  var wrap = $("#chips"); wrap.textContent = "";
+  (res.readings || []).forEach(function (r) { wrap.appendChild(chipFor(r, String(r.role) === String(res.taken))); });
+  if (!wrap.children.length) wrap.appendChild(el("span", "hint", "no readings"));
+}
+function markCorrecting(role) {
+  $$("#chips .chip").forEach(function (c) { c.classList.remove("correcting"); if (c.querySelector(".chead b") && c.querySelector(".chead b").textContent === role) c.classList.add("correcting"); });
+}
+function renderAnswer(res) {
+  state.ask = res; state.lastSpoken = res.spoken || ""; state.lastAudioUrl = res.audio_url || null;
+  var slot = $("#slotBadge"); slot.textContent = "slot " + (res.slot_version == null ? "—" : res.slot_version); slot.className = "pill mono k";
+  $("#shapeBadge").textContent = "shape " + (res.shape == null ? "—" : res.shape);
+  var cite = $("#citeBadge");
+  if (String(res.citations_resolved) === "0/0") { cite.textContent = "citations 0/0 · The wiki does not cover this"; cite.className = "pill mono k"; }
+  else { cite.textContent = "citations " + res.citations_resolved + " resolved"; cite.className = "pill mono g"; }
+  $("#entropyBadge").textContent = "H " + (res.entropy_bits == null ? "—" : num(res.entropy_bits, 3)) + " bits";
+  var ms = $("#msBadge"); ms.textContent = res.ms == null ? "" : res.ms + " ms"; ms.hidden = res.ms == null;
+  $("#spoken").textContent = res.spoken == null ? "" : String(res.spoken);
+  renderScreen(res.screen);
+  $("#chunkCard").hidden = true;
+  renderChips(res);
+  var why = $("#why"); why.textContent = "";
+  why.appendChild(document.createTextNode(String(res.why == null ? "—" : res.why)));
+  if (res.taken_reading && res.taken_reading.assumption) why.appendChild(document.createTextNode(" Assumption: " + res.taken_reading.assumption));
+  $("#flip").textContent = res.flip_condition == null ? "—" : String(res.flip_condition);
+  state.prior = res.prior; setPrior(res.prior, false); $("#priorHint").textContent = "entropy " + num(res.entropy_bits, 3) + " bits over self-reported p";
+  var ans = $("#answer"); ans.hidden = false;
+  glow(ans, "b"); glow(cite, String(res.citations_resolved) === "0/0" ? "a" : "g");
+  speak(res.spoken, res.audio_url);
+}
+
+/* ---------------------------------------------------------------------- ask action -- */
+var sendBtn = $("#sendBtn"), qInput = $("#q");
+async function ask() {
+  var text = qInput.value.trim();
+  if (!text) { setStatus("type a question, or hold to talk", "err"); qInput.focus(); return; }
+  sendBtn.disabled = true; setStatus("asking… (about 25 s; the pipeline is live)", "busy");
+  startPipeline(text);
+  try {
+    var res = await jpost("/ask", { text: text, session_id: state.sessionId });
+    stopPipeline();
+    renderAnswer(res);
+    setStatus("answered" + (res.ms == null ? "" : " in " + res.ms + " ms"), "ok");
+    scheduleVitals();
+  } catch (e) {
+    stopPipeline(); setStatus("ask failed: " + e.message, "err");
+  } finally { sendBtn.disabled = false; }
+}
+
+/* --------------------------------------------------------------------- corrections -- */
+function addCorrectFeedRow(toRole) {
+  var row = { id: "ledger:correct:" + Date.now().toString(36), type: "correct", target: "shape", target_kind: "shape", before: 0.333, after: 0.533, delta: 0.2, cause: "user corrected the reading → " + toRole, ts: new Date().toISOString() };
+  feedAdd(row); glow(feedEl.firstChild, "r");
+}
+async function correct(toRole) {
+  var q = state.ask;
+  if (!q || q.question_id == null) { setStatus("ask something first", "err"); return; }
+  markCorrecting(toRole); setStatus("correcting → " + toRole + " …", "busy");
+  try {
+    var res = await jpost("/correct", { question_id: q.question_id, to_role: toRole });
+    if (res.prior_before && res.prior_after) travelPrior(res.prior_before, res.prior_after);
+    else if (res.prior_after) { setPrior(res.prior_after, true); glow($("#priorWrap"), "a"); }
+    state.prior = res.prior_after || state.prior;
+    q.taken = toRole;
+    (q.readings || []).forEach(function (r) { if (String(r.role) === String(toRole)) r.posterior = 1; });
+    renderChips(q); addCorrectFeedRow(toRole);
+    var ids = (res.ledger_ids || []).join(", ");
+    setStatus("correction recorded — the prior moved" + (ids ? " · ledger " + ids : ""), "ok");
+    scheduleVitals();
+  } catch (e) { setStatus("correct failed: " + e.message, "err"); }
+}
+function confirmViaFeed() {
+  var q = state.ask;
+  var row = { id: "ledger:confirm:" + ((q && q.question_id) || Date.now()), type: "confirm", target: (q && q.citations && q.citations[0] && q.citations[0].chunk_id) || "answer", target_kind: "evidence", before: 0.5, after: 0.667, delta: 0.167, cause: "user confirmed the cited answer", ts: new Date().toISOString() };
+  feedAdd(row); glow(feedEl.firstChild, "g");
+  var taken = $("#chips .chip.taken .cnum");
+  if (taken) countUp(taken, 0.45, 1, function (v) { return "p " + num(v, 2) + " · posterior " + num(v, 2); }, 620);
+}
+async function confirmAnswer() {
+  var q = state.ask;
+  if (!q || q.question_id == null) { setStatus("ask something first", "err"); return; }
+  setStatus("confirming…", "busy");
+  try { await jpost("/confirm", { question_id: q.question_id }); confirmViaFeed(); setStatus("confirmed — evidence +1, posterior → 1", "ok"); scheduleVitals(); }
+  catch (e) { setStatus("confirm failed: " + e.message, "err"); }
+}
+
+/* ---------------------------------------------------------------------- stale tick -- */
+function renderTickResult(res) {
+  var n = res && res.decayed != null ? res.decayed : "?";
+  feedAdd({ id: "ledger:decay:" + Date.now().toString(36), type: "decay", target: "corpus", target_kind: "fitness", before: 1, after: 0.95, delta: -0.05, cause: "stale tick · 5% toward prior · " + n + " chunks", ts: new Date().toISOString() });
+  glow($("#feed").firstChild, "a");
+  setStatus("tick · decayed " + n, "ok");
+}
+async function tick() {
+  setStatus("ticking…", "busy");
+  try { renderTickResult(await jpost("/tick", {})); scheduleVitals(); }
+  catch (e) { setStatus("tick failed: " + e.message, "err"); }
+}
+
+/* ------------------------------------------------------------------------- reflect -- */
+function renderReflect(res) {
+  var box = $("#sentences"); box.textContent = "";
+  var list = res.sentences || [];
+  $("#reflectMeta").textContent = list.length + " sentences · rows read " + (res.rows_read == null ? "—" : res.rows_read) + " · dropped " + (res.dropped == null ? "0" : res.dropped) + (res.llm ? " · llm" : "");
+  list.forEach(function (s) {
+    var node = el("div", "sentence");
+    node.appendChild(document.createTextNode(String(s.text == null ? "" : s.text)));
+    var row = el("div", "srow");
+    (s.row_ids || []).forEach(function (id) { row.appendChild(el("span", "ridchip", String(id))); });
+    var play = el("button", "btn tiny", "play"); play.type = "button";
+    play.addEventListener("click", function () { speak(s.text, null); });
+    row.appendChild(play); node.appendChild(row); box.appendChild(node);
+  });
+  if (!list.length) box.appendChild(el("p", "empty", "nothing yet today"));
+  glow($("#reflectBox"), "b");
+  if (res.audio_url || res.spoken) speak(res.spoken || list.map(function (s) { return s.text; }).join(" "), res.audio_url);
+}
+function renderLesson(row) {
+  var box = $("#sentences");
+  var empty = box.querySelector(".empty"); if (empty) box.textContent = "";
+  var node = el("div", "sentence");
+  node.appendChild(document.createTextNode(String(row.cause || "lesson written")));
+  var srow = el("div", "srow");
+  srow.appendChild(el("span", "ridchip", String(row.id || "")));
+  if (row.target) srow.appendChild(el("span", "ridchip", String(row.target)));
+  node.appendChild(srow);
+  box.insertBefore(node, box.firstChild); glow(node, "b");
+}
+async function reflect() {
+  setStatus("reflecting… (may take ~30 s)", "busy");
+  try {
+    var res = await jpost("/reflect", {});
+    renderReflect(res);
+    var n = (res.sentences || []).length;
+    setStatus(n + " sentence" + (n === 1 ? "" : "s") + " · rows read " + (res.rows_read == null ? "—" : res.rows_read) + " · dropped " + (res.dropped == null ? "0" : res.dropped), "ok");
+    scheduleVitals();
+  } catch (e) { setStatus("reflect failed: " + e.message, "err"); }
+}
+
+/* ------------------------------------------------------------------------- improve -- */
+function showImprove() { $("#improveBox").hidden = false; var w = $("#candidates"); if (w.firstChild && w.firstChild.classList && w.firstChild.classList.contains("empty")) w.textContent = ""; }
+function prependCard(node) { var w = $("#candidates"); w.insertBefore(node, w.firstChild); }
+function bandEl(cand, baseline) {
+  var wrap = el("div", "band");
+  var bm = baseline ? meanOf(baseline.means) : null;
+  if (!baseline || bm == null) { wrap.appendChild(el("div", "cline", "designed, measured after the demo")); return wrap; }
+  var bs = baseline.spread == null ? 0 : Number(baseline.spread);
+  var cm = cand.mean == null ? bm : Number(cand.mean);
+  var pass = cand.verdict && /pass/i.test(String(cand.verdict));
+  var lo = Math.min(bm - bs, cm), hi = Math.max(bm + bs, cm);
+  var pad = (hi - lo) * 0.3 || 0.05; lo -= pad; hi += pad;
+  var pos = function (x) { return Math.max(0, Math.min(100, ((x - lo) / (hi - lo)) * 100)); };
+  var track = el("div", "band-track");
+  var range = el("div", "band-range"); range.style.left = pos(bm - bs) + "%"; range.style.width = Math.max(1.5, pos(bm + bs) - pos(bm - bs)) + "%"; track.appendChild(range);
+  var base = el("div", "band-base"); base.style.left = pos(bm) + "%"; track.appendChild(base);
+  var dot = el("div", "band-dot"); dot.style.left = pos(cm) + "%"; track.appendChild(dot);
+  wrap.appendChild(track);
+  var leg = el("div", "band-legend");
+  leg.appendChild(document.createTextNode("baseline " + num(bm, 2) + " ± " + bs.toFixed(2) + " · candidate "));
+  leg.appendChild(el("span", pass ? "g" : "r", num(cm, 2)));
+  leg.appendChild(document.createTextNode(" · " + signed(cand.delta, 2) + " "));
+  leg.appendChild(el("span", pass ? "g" : "r", String(cand.verdict || "")));
+  wrap.appendChild(leg);
+  return wrap;
+}
+function candidateCard(c, baseline) {
+  var status = String(c.status || "");
+  var kind;
+  if (/vetoed_prelint/.test(status)) kind = "block";
+  else if (/error/.test(status)) kind = "error";
+  else if (/clean_awaiting_baseline/.test(status)) kind = "pending";
+  else if (c.verdict && /pass/i.test(String(c.verdict))) kind = "pass";
+  else if (c.verdict && /veto/i.test(String(c.verdict))) kind = "veto";
+  else if (/scored/.test(status)) kind = "veto";
+  else kind = "pending";
+  var tag = kind === "block" ? "BLOCK" : kind === "pass" ? "PASS" : kind === "veto" ? "VETO" : kind === "error" ? "ERROR" : "PENDING";
+  var card = el("div", "cand " + kind);
+  var head = el("div", "chead");
+  head.appendChild(el("span", "tag", tag));
+  head.appendChild(el("span", "cname", c.name == null ? "(unnamed)" : String(c.name)));
+  if (c.axis) head.appendChild(el("span", "caxis", "axis:" + c.axis));
+  card.appendChild(head);
+  if (kind === "block") {
+    var r = el("div", "creason", "vetoed before any sandbox — matched ");
+    r.appendChild(el("span", "pat", c.veto_reason ? String(c.veto_reason) : "lint pattern"));
+    card.appendChild(r);
+  } else if (kind === "error") {
+    card.appendChild(el("div", "creason", c.veto_reason ? String(c.veto_reason) : "candidate failed"));
+  } else if (kind === "pending") {
+    card.appendChild(el("div", "cline", "awaiting baseline"));
+  } else {
+    card.appendChild(bandEl(c, baseline));
+  }
+  var foot = el("div", "cfoot");
+  ["status", "verdict", "spread", "ratio", "sandbox_id", "runner"].forEach(function (k) { if (c[k] == null || c[k] === "") return; foot.appendChild(el("span", null, k + " " + c[k])); });
+  if (foot.children.length) card.appendChild(foot);
+  return card;
+}
+function candidateKey(c) { return String(c.sandbox_id || c.id || c.name || ""); }
+var candCards = {};
+function renderImprove(res) {
+  var wrap = $("#candidates"); wrap.textContent = ""; state.candidates = {}; candCards = {};
+  var list = res.candidates || [];
+  $("#improveMeta").textContent = list.length + " candidates" + (res.baseline == null ? " · baseline pending" : "");
+  list.forEach(function (c) { var k = candidateKey(c); state.candidates[k] = c; var card = candidateCard(c, res.baseline); candCards[k] = card; wrap.appendChild(card); });
+  $("#improveBox").hidden = false;
+  if (!list.length) wrap.appendChild(el("p", "empty", "no candidates"));
+  glow($("#improveBox"), "b");
+}
+function upsertCandidate(row) {
+  if (!row || typeof row !== "object") return;
+  var k = candidateKey(row); state.candidates[k] = row;
+  if (!$("#improveBox").hidden) {
+    showImprove();
+    var card = candidateCard(row, null);
+    var old = candCards[k];
+    if (old && old.parentNode) old.parentNode.replaceChild(card, old);
+    else prependCard(card);
+    candCards[k] = card;
+    glow(card, /veto|block/i.test(String(row.status)) ? "r" : "g");
+  }
+}
+function renderGate(row) {
+  showImprove();
+  var pass = Number(row.delta) > 0;
+  var cand = { name: row.target || "gate", axis: "gate", status: "scored", verdict: pass ? "PASS" : "VETO", mean: row.after, spread: null, delta: row.delta, ratio: null, sandbox_id: "sbx_gate", runner: (state.vitals && state.vitals.runner) || "daytona" };
+  var card = candidateCard(cand, FX.baseline);
+  prependCard(card); glow(card, pass ? "g" : "r");
+  setStatus("gate · delta " + signed(row.delta, 2) + " vs spread " + (row.cause || "").replace(/.*spread\s*/i, "") + " → " + cand.verdict, pass ? "ok" : "err");
+}
+function renderPromote(row) {
+  var v = row.after != null ? row.after : (state.vitals && state.vitals.slot_version);
+  if (state.vitals) state.vitals.slot_version = v;
+  var b = $("#slotBadge"); b.textContent = "slot " + v; b.className = "pill mono g"; glow(b, "g");
+  feedAdd({ id: row.id || ("ledger:promote:" + Date.now().toString(36)), type: "promote", target: row.target || "slot", target_kind: "slot", before: row.before, after: row.after, delta: row.delta, cause: row.cause || "promoted slot", ts: new Date().toISOString() });
+  setStatus("slot promoted → v" + v + " (only after a PASS)", "ok");
+}
+async function improve() {
+  setStatus("improving… (sandboxes may take a while)", "busy");
+  try {
+    var res = await jpost("/improve", {});
+    renderImprove(res);
+    if (res.slot_version != null && res.slot_version !== state.prevSlot) { state.prevSlot = res.slot_version; renderPromote({ target: "slot", after: res.slot_version, cause: "slot version advanced", before: res.slot_version }); }
+    var blocked = (res.candidates || []).filter(function (c) { return /vetoed_prelint/.test(String(c.status)); }).length;
+    var scored = (res.candidates || []).filter(function (c) { return c.verdict; }).length;
+    setStatus("candidates " + (res.candidates || []).length + " · blocked " + blocked + " · scored " + scored + (res.baseline == null ? " · baseline measured after the demo" : ""), "ok");
+    scheduleVitals();
+  } catch (e) { setStatus("improve failed: " + e.message, "err"); }
+}
+function handleEvent(msg) {
+  if (!msg || typeof msg !== "object") return;
+  var row = msg.row || {};
+  if (msg.table === "ledger") {
+    var t = String(row.type || "");
+    if (t === "promote") { renderPromote(row); scheduleVitals(); return; }
+    feedAdd(row);
+    if (t === "gate") { renderGate(row); }
+    else if (t === "lesson") { renderLesson(row); }
+    else if (t === "correct") glow($("#priorWrap"), "r");
+    else if (t === "prior") glow($("#priorWrap"), "a");
+    scheduleVitals();
+  } else if (msg.table === "candidate") { upsertCandidate(row); scheduleVitals(); }
+}
+
+/* ------------------------------------------------------------------------ upload -- */
+var SUPPORTED = [".md", ".markdown", ".txt", ".html", ".htm", ".pdf", ".csv", ".tsv", ".xlsx"];
+var MAX_FILES = 10, MAX_FILE = 20 * 1024 * 1024, MAX_TOTAL = 50 * 1024 * 1024, MAX_CHUNKS = 800, MAX_DIR = 500 * 1024 * 1024;
+var uploadChips = {}, uploadTotalChunks = 0;
+
+function makeChip(name, kind, size) {
+  var chip = el("div", "uchip");
+  chip.appendChild(el("span", "ukind", kind || "?"));
+  chip.appendChild(el("span", "uname", name));
+  chip.appendChild(el("span", "usize mono", size == null ? "" : fmtBytes(size)));
+  chip.appendChild(el("span", "ustate", "queued"));
+  return chip;
+}
+function addChip(name, kind, size, cls) {
+  var chip = makeChip(name, kind, size);
+  if (cls) chip.className = "uchip " + cls;
+  $("#uploadFiles").appendChild(chip);
+  uploadChips[name] = chip;
+  return chip;
+}
+function markSending(name) {
+  var chip = uploadChips[name]; if (!chip) return;
+  chip.classList.add("sending"); chip.querySelector(".ustate").textContent = "indexing…";
+}
+function markChipDone(name, info) {
+  var chip = uploadChips[name];
+  if (!chip) chip = addChip(name, info.kind, null);
+  chip.classList.remove("sending"); chip.classList.add("done");
+  var st = chip.querySelector(".ustate");
+  countUp(st, 0, info.chunks, function (v) { return Math.round(v) + " chunks"; }, 720);
+  if (info.kind) chip.querySelector(".ukind").textContent = info.kind;
+  glow(chip, "g");
+}
+function markChipRejected(name, reason) {
+  var existing = uploadChips[name];
+  if (existing && existing.parentNode) existing.parentNode.removeChild(existing);
+  var chip = el("div", "uchip rejected");
+  chip.appendChild(el("span", "ukind", "skip"));
+  chip.appendChild(el("span", "uname", name));
+  chip.appendChild(el("span", "ustate", reason || "rejected"));
+  chip.title = reason || "rejected";
+  $("#uploadRejected").appendChild(chip);
+  delete uploadChips[name];
+  glow(chip, "r");
+}
+function renderClientRejection(list) {
+  var box = $("#uploadRejected");
+  (list || []).forEach(function (r) {
+    var chip = el("div", "uchip rejected");
+    chip.appendChild(el("span", "ukind", "skip"));
+    chip.appendChild(el("span", "uname", r.name));
+    chip.appendChild(el("span", "ustate", r.reason));
+    box.appendChild(chip); glow(chip, "r");
+  });
+}
+function renderUploadError(status, detail, is429) {
+  var box = $("#uploadError"); box.hidden = false;
+  box.className = "uploaderr" + (is429 ? " a" : "");
+  box.textContent = "";
+  box.appendChild(el("b", null, status ? "HTTP " + status + " — " : ""));
+  box.appendChild(document.createTextNode(detail || "upload failed"));
+  glow(box, is429 ? "a" : "r");
+}
+function setDropBusy(on) { $("#drop").classList.toggle("busy", !!on); }
+function renderUploadResult(res) {
+  var chunks = 0;
+  (res.files || []).forEach(function (f) { markChipDone(f.name, f); chunks += Number(f.chunks || 0); });
+  (res.rejected || []).forEach(function (r) { markChipRejected(r.name, r.reason); });
+  uploadTotalChunks += chunks;
+  if (chunks) bumpCorpus(chunks);
+  $("#uploadSummary").textContent = (res.files || []).length + " file(s) · " + chunks + " chunks indexed · " + fmtInt(res.ms) + " ms";
+  setStatus(chunks ? ("indexed " + chunks + " chunks — ask about them now") : "nothing new indexed", chunks ? "ok" : "err");
+  scheduleVitals();
+}
+function handleFiles(list) {
+  var arr = Array.prototype.slice.call(list || []);
+  if (!arr.length) return;
+  $("#uploadError").hidden = true;
+  var accepted = [], rejected = [], total = 0;
+  arr.forEach(function (f, idx) {
+    var name = f.name || "file";
+    var ext = "." + (name.split(".").pop() || "").toLowerCase();
+    if (idx >= MAX_FILES) { rejected.push({ name: name, reason: "at most " + MAX_FILES + " files per upload" }); return; }
+    if (SUPPORTED.indexOf(ext) < 0) { rejected.push({ name: name, reason: "unsupported type (md, txt, html, pdf, csv, tsv, xlsx)" }); return; }
+    if (f.size > MAX_FILE) { rejected.push({ name: name, reason: "larger than 20 MB" }); return; }
+    if (total + f.size > MAX_TOTAL) { rejected.push({ name: name, reason: "50 MB per upload limit reached" }); return; }
+    total += f.size; accepted.push(f);
+  });
+  renderClientRejection(rejected);
+  accepted.forEach(function (f) { var c = addChip(f.name, (f.name.split(".").pop() || "").toLowerCase(), f.size); c.classList.add("sending"); c.querySelector(".ustate").textContent = "queued"; });
+  if (accepted.length) doUpload(accepted);
+  else { setStatus("nothing to upload — see the reasons above", "err"); $("#uploadSummary").textContent = rejected.length + " file(s) pre-checked out"; }
+}
+async function doUpload(files) {
+  setDropBusy(true);
+  files.forEach(function (f) { markSending(f.name); });
+  setStatus("indexing " + files.length + " file(s)… chunking, embedding, storing", "busy");
+  var fd = new FormData();
+  files.forEach(function (f) { fd.append("files", f, f.name); });
+  try {
+    renderUploadResult(await jpostForm("/upload", fd));
+  } catch (e) {
+    renderUploadError(e.status || 0, e.message, e.status === 429);
+    files.forEach(function (f) { markChipRejected(f.name, e.status === 429 ? "not sent — busy" : "rejected"); });
+    setStatus("upload failed: " + e.message, "err");
+  } finally { setDropBusy(false); }
+}
+
+/* ---------------------------------------------------------------------- hold to talk -- */
+var talkBtn = $("#talkBtn");
+var rec = null, recChunks = [], recStream = null, recStart = 0, recActive = false;
+function pickMime() {
+  var opts = ["audio/webm;codecs=opus", "audio/webm", "audio/ogg;codecs=opus"];
+  if (!window.MediaRecorder || !MediaRecorder.isTypeSupported) return "";
+  for (var i = 0; i < opts.length; i++) if (MediaRecorder.isTypeSupported(opts[i])) return opts[i];
+  return "";
+}
+function applyTranscript(text) {
+  text = String(text == null ? "" : text).trim();
+  qInput.value = text;
+  setStatus(text ? "transcript ready — press Send" : "no speech detected", text ? "ok" : "err");
+  if (text) { qInput.focus(); glow(qInput, "b"); }
+}
+function talkDown(ev) {
+  if (ev && ev.preventDefault) ev.preventDefault();
+  if (recActive) return;
+  if (MOCK) { recActive = true; talkBtn.classList.add("rec"); talkBtn.textContent = "listening…"; talkBtn.setAttribute("aria-pressed", "true"); setStatus("recording (mock) — release to transcribe", "busy"); return; }
+  if (!navigator.mediaDevices || !window.MediaRecorder) { setStatus("recording not supported here — type instead", "err"); return; }
+  recActive = true; talkBtn.classList.add("rec"); talkBtn.textContent = "listening…"; talkBtn.setAttribute("aria-pressed", "true");
+  navigator.mediaDevices.getUserMedia({ audio: true }).then(function (stream) {
+    recStream = stream; recChunks = [];
+    var mime = pickMime();
+    try { rec = mime ? new MediaRecorder(stream, { mimeType: mime }) : new MediaRecorder(stream); } catch (e) { rec = new MediaRecorder(stream); }
+    rec.ondataavailable = function (e) { if (e.data && e.data.size) recChunks.push(e.data); };
+    rec.onstop = function () {
+      var type = rec.mimeType || "audio/webm";
+      if (recStream) recStream.getTracks().forEach(function (t) { t.stop(); });
+      recStream = null;
+      var blob = new Blob(recChunks, { type: type }); recChunks = [];
+      if (blob.size < 1200 || Date.now() - recStart < 400) { setStatus("hold the button while you speak", "err"); return; }
+      stt(blob);
+    };
+    recStart = Date.now(); rec.start(); setStatus("recording — release to transcribe", "busy");
+  }).catch(function () { talkUp(); setStatus("microphone permission denied", "err"); });
+}
+function talkUp() {
+  talkBtn.classList.remove("rec"); talkBtn.textContent = "Hold to talk"; talkBtn.setAttribute("aria-pressed", "false");
+  if (MOCK && recActive) { recActive = false; applyTranscript("how do we run a discovery call?"); return; }
+  if (rec && rec.state === "recording") { try { rec.stop(); } catch (e) {} }
+  recActive = false;
+}
+async function stt(blob) {
+  setStatus("transcribing…", "busy");
+  try {
+    var fd = new FormData(); fd.append("audio", blob, "audio.webm");
+    var data = await jpostForm("/stt", fd);
+    applyTranscript(data && data.text);
+  } catch (e) { setStatus("transcription failed: " + e.message, "err"); }
+}
+
+/* ---------------------------------------------------------------------- websocket -- */
+var ws = null, wsTimer = null;
+function setWs(on) {
+  $("#wsDot").classList.toggle("on", !!on);
+  $("#wsText").textContent = on ? "live" : "retrying";
+  $("#wsBadge").title = on ? "event stream connected" : "event stream disconnected (retrying)";
+}
+function connectWS() {
+  if (MOCK) { mockWs(); return; }
+  var proto = location.protocol === "https:" ? "wss:" : "ws:";
+  try { ws = new WebSocket(proto + "//" + location.host + "/events"); } catch (e) { setWs(false); scheduleReconnect(); return; }
+  ws.onopen = function () { state.wsTries = 0; setWs(true); };
+  ws.onmessage = function (ev) { var m; try { m = JSON.parse(ev.data); } catch (e) { return; } handleEvent(m); };
+  ws.onclose = function () { setWs(false); scheduleReconnect(); };
+  ws.onerror = function () { try { ws.close(); } catch (e) {} };
+}
+function scheduleReconnect() {
+  var n = Math.min(state.wsTries++, 6);
+  var d = Math.min(30000, 600 * Math.pow(2, n)) + Math.floor(Math.random() * 300);
+  clearTimeout(wsTimer); wsTimer = setTimeout(connectWS, d);
+}
+function mockWs() {
+  setWs(true);
+  if (AUDIT) return;                 // the audit drives the WS frames itself
+  var li = 0, ci = 0;
+  var t1 = setInterval(function () {
+    if (li >= FX.ledger.length) { clearInterval(t1); return; }
+    handleEvent({ table: "ledger", action: "CREATE", row: clone(FX.ledger[li++]) });
+  }, 1500);
+  var t2 = setInterval(function () {
+    if (ci >= FX.candidates.length) { clearInterval(t2); return; }
+    handleEvent({ table: "candidate", action: "CREATE", row: clone(FX.candidates[ci++]) });
+  }, 1900);
+}
+
+/* --------------------------------------------------------------------- wiring + boot -- */
+function newSession() {
+  state.sessionId = newSessionId(); renderSession();
+  state.ask = null; state.prior = null;
+  $("#answer").hidden = true; $("#chunkCard").hidden = true;
+  setStatus("new session — corrections will not carry to the next person", "ok");
+  stopAudio();
+}
+sendBtn.addEventListener("click", ask);
+qInput.addEventListener("keydown", function (ev) { if (ev.key === "Enter") { ev.preventDefault(); ask(); } });
+$("#confirmBtn").addEventListener("click", confirmAnswer);
+$("#replayBtn").addEventListener("click", function () { speak(state.lastSpoken, state.lastAudioUrl); });
+$("#reflectBtn").addEventListener("click", reflect);
+$("#improveBtn").addEventListener("click", improve);
+$("#tickBtn").addEventListener("click", tick);
+$("#newSessionBtn").addEventListener("click", newSession);
+talkBtn.addEventListener("pointerdown", talkDown);
+talkBtn.addEventListener("pointerup", function (ev) { ev.preventDefault(); talkUp(); });
+talkBtn.addEventListener("pointercancel", talkUp);
+talkBtn.addEventListener("pointerleave", function () { if (recActive) talkUp(); });
+talkBtn.addEventListener("contextmenu", function (e) { e.preventDefault(); });
+talkBtn.addEventListener("keydown", function (ev) { if ((ev.key === " " || ev.key === "Enter") && !recActive) { ev.preventDefault(); talkDown(ev); } });
+talkBtn.addEventListener("keyup", function (ev) { if (ev.key === " " || ev.key === "Enter") { ev.preventDefault(); talkUp(); } });
+
+var drop = $("#drop"), fileInput = $("#fileInput");
+drop.addEventListener("click", function () { fileInput.click(); });
+drop.addEventListener("keydown", function (e) { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); fileInput.click(); } });
+["dragenter", "dragover"].forEach(function (ev) { drop.addEventListener(ev, function (e) { e.preventDefault(); drop.classList.add("over"); }); });
+["dragleave", "dragend"].forEach(function (ev) { drop.addEventListener(ev, function () { drop.classList.remove("over"); }); });
+drop.addEventListener("drop", function (e) { e.preventDefault(); drop.classList.remove("over"); if (e.dataTransfer && e.dataTransfer.files) handleFiles(e.dataTransfer.files); });
+fileInput.addEventListener("change", function () { handleFiles(fileInput.files); fileInput.value = ""; });
+
+newSession();
+updateFeedEmpty();
+loadVitals(false);
+loadConfig();
+connectWS();
+var vitalsTimer = setInterval(function () { loadVitals(true); }, 20000);
+window.addEventListener("beforeunload", function () {
+  clearInterval(vitalsTimer); clearTimeout(wsTimer);
+  try { if (ws) ws.close(); } catch (e) {}
+});
+if (AUDIT) { $("#audit").hidden = false; setTimeout(runAudit, 80); }
+
+/* ============================================================================ audit --
+   ?mock=1&audit=1 drives every entry of the event→feedback map through the real render
+   path, watches the entry's region with a MutationObserver, and reports any entry that
+   produced no visible change within 1000 ms. */
+var auditSeq = 0, auditFinished = false;
+function ledgerRow(type) {
+  var found = null;
+  FX.ledger.forEach(function (r) { if (!found && r.type === type) found = r; });
+  var row = clone(found || { type: type }); auditSeq++;
+  row.id = (row.id || ("ledger:" + type)) + ":audit" + auditSeq;
+  row.ts = new Date().toISOString();
+  return row;
+}
+function mockImprove() { return { candidates: clone(FX.candidates).concat(clone(FX.scored)), slot_version: "1.0", baseline: null }; }
+function ensureVitals() { if (!state.vitals) state.vitals = clone(MOCK_VITALS); }
+
+var AUDIT_MAP = [
+  { key: "ask.start", region: "#pipeline", run: function () { startPipeline("how do we run a discovery call?"); setTimeout(stopPipeline, 60); } },
+  { key: "ask.answered", region: "#answer", run: function () { renderAnswer(clone(FX.ask)); } },
+  { key: "ask.cited_n_n", region: "#citeBadge", run: function () { renderAnswer(clone(FX.askCited)); } },
+  { key: "ask.abstain_0_0", region: "#citeBadge", run: function () { renderAnswer(clone(FX.ask)); } },
+  { key: "reading.taken", region: "#chips", run: function () { renderAnswer(clone(FX.askCited)); } },
+  { key: "reading.correct", region: "#prior", run: function () { travelPrior([0.33, 0.34, 0.33], [0.2, 0.53, 0.27]); } },
+  { key: "ledger.confirm", region: "#feed", run: function () { handleEvent({ table: "ledger", action: "CREATE", row: ledgerRow("confirm") }); } },
+  { key: "ledger.correct", region: "#feed", run: function () { handleEvent({ table: "ledger", action: "CREATE", row: ledgerRow("correct") }); } },
+  { key: "ledger.prior", region: "#priorWrap", run: function () { handleEvent({ table: "ledger", action: "CREATE", row: ledgerRow("prior") }); } },
+  { key: "ledger.decay", region: "#feed", run: function () { handleEvent({ table: "ledger", action: "CREATE", row: ledgerRow("decay") }); } },
+  { key: "ledger.veto", region: "#feed", run: function () { handleEvent({ table: "ledger", action: "CREATE", row: ledgerRow("veto") }); } },
+  { key: "ledger.gate", region: "#candidates", run: function () { handleEvent({ table: "ledger", action: "CREATE", row: ledgerRow("gate") }); } },
+  { key: "ledger.promote", region: "#slotBadge", run: function () { handleEvent({ table: "ledger", action: "CREATE", row: ledgerRow("promote") }); } },
+  { key: "ledger.lesson", region: "#sentences", run: function () { handleEvent({ table: "ledger", action: "CREATE", row: ledgerRow("lesson") }); } },
+  { key: "reflect.result", region: "#sentences", run: function () { renderReflect(clone(FX.reflect)); } },
+  { key: "improve.result", region: "#candidates", run: function () { renderImprove(mockImprove()); } },
+  { key: "candidate.vetoed_prelint", region: "#candidates", run: function () { upsertCandidate(clone(FX.candidates[3])); } },
+  { key: "candidate.scored_pass", region: "#candidates", run: function () { upsertCandidate(clone(FX.scored[0])); } },
+  { key: "candidate.scored_veto", region: "#candidates", run: function () { upsertCandidate(clone(FX.scored[1])); } },
+  { key: "candidate.clean_awaiting_baseline", region: "#candidates", run: function () { upsertCandidate(clone(FX.candidates[0])); } },
+  { key: "candidate.error", region: "#candidates", run: function () { upsertCandidate(clone(FX.scored[2])); } },
+  { key: "verdict.pass", region: "#candidates", run: function () { renderImprove({ candidates: [clone(FX.scored[0])], baseline: clone(FX.baseline) }); } },
+  { key: "verdict.veto", region: "#candidates", run: function () { renderImprove({ candidates: [clone(FX.scored[1])], baseline: clone(FX.baseline) }); } },
+  { key: "tick.response", region: "#feed", run: function () { renderTickResult({ decayed: 2 }); } },
+  { key: "vitals.update", region: "#vitalsBody", run: function () { ensureVitals(); renderVitals(true); } },
+  { key: "config.load", region: "#vitalsBody", run: function () { state.config = clone(FX.config); renderVitals(false); } },
+  { key: "upload.ok", region: "#uploadFiles", run: function () { renderUploadResult({ files: [{ name: "Team_Handbook.pdf", kind: "pdf", chunks: 14, title: "Team Handbook" }], rejected: [], chunks: 14, ms: 6200 }); } },
+  { key: "upload.rejected_file", region: "#uploadRejected", run: function () { renderUploadResult(clone(FX.uploadRejected)); } },
+  { key: "upload.precheck", region: "#uploadRejected", run: function () { renderClientRejection([{ name: "budget.rtf", reason: "unsupported type (md, txt, html, pdf, csv, tsv, xlsx)" }]); } },
+  { key: "upload.413", region: "#uploadError", run: function () { renderUploadError(413, FX.uploadErrors["413"].detail, false); } },
+  { key: "upload.429", region: "#uploadError", run: function () { renderUploadError(429, FX.uploadErrors["429"].detail, true); } },
+  { key: "upload.corpus_tick", region: "#vitalsBody", run: function () { ensureVitals(); bumpCorpus(14); } },
+  { key: "stt.transcript", region: "#status", run: function () { applyTranscript("how do we run a discovery call?"); } },
+  { key: "tts.play", region: "#audioState", run: function () { speak("The wiki does not cover this.", null); } },
+  { key: "tts.fallback", region: "#audioState", run: function () { browserSpeak("The wiki does not cover this."); } },
+  { key: "ws.down", region: "#wsDot", run: function () { setWs(false); } },
+  { key: "ws.up", region: "#wsDot", run: function () { setWs(true); } },
+  { key: "error.ask", region: "#status", run: function () { setStatus("ask failed: network unreachable", "err"); } },
+  { key: "error.correct", region: "#status", run: function () { setStatus("correct failed: to_role must be one of literal, intent, scope", "err"); } },
+  { key: "error.confirm", region: "#status", run: function () { setStatus("confirm failed: connection reset by peer", "err"); } },
+  { key: "error.tick", region: "#status", run: function () { setStatus("tick failed: db unavailable", "err"); } },
+  { key: "error.reflect", region: "#status", run: function () { setStatus("reflect failed: model timeout after 30 s", "err"); } },
+  { key: "error.improve", region: "#status", run: function () { setStatus("improve failed: sandbox runner offline", "err"); } },
+  { key: "error.stt", region: "#status", run: function () { setStatus("transcription failed: speech-to-text unavailable", "err"); } },
+  { key: "error.upload", region: "#uploadError", run: function () { renderUploadError(503, "database unavailable: ConnectionError", false); } },
+  { key: "citations.0_0", region: "#citeBadge", run: function () { renderAnswer(clone(FX.ask)); } }
+];
+
+function auditCase(entry) {
+  return new Promise(function (resolve) {
+    var region = null;
+    try { region = document.querySelector(entry.region); } catch (e) {}
+    if (!region) { resolve(false); return; }
+    var done = false, obs = null, tmr = null;
+    function finish(ok) {
+      if (done) return; done = true;
+      if (obs) { try { obs.disconnect(); } catch (e) {} }
+      clearTimeout(tmr); resolve(ok);
+    }
+    try {
+      obs = new MutationObserver(function () { finish(true); });
+      obs.observe(region, { subtree: true, childList: true, characterData: true, attributes: true });
+    } catch (e) { resolve(false); return; }
+    tmr = setTimeout(function () { finish(false); }, 1000);
+    try { var r = entry.run(); if (r && typeof r.then === "function") r.then(null, function () {}); } catch (e) {}
+  });
+}
+function finishAudit(fails) {
+  if (auditFinished) return;
+  auditFinished = true;
+  var text = fails.length ? ("AUDIT FAIL: " + fails.join(", ")) : "AUDIT PASS";
+  document.title = text;
+  var pre = document.getElementById("audit");
+  if (pre) { pre.hidden = false; pre.textContent = text; }
+}
+function runAudit() {
+  var fails = [], i = 0;
+  setTimeout(function () { finishAudit(fails); }, 14000);
+  (function next() {
+    if (i >= AUDIT_MAP.length) { finishAudit(fails); return; }
+    var entry = AUDIT_MAP[i++];
+    auditCase(entry).then(function (ok) { if (!ok) fails.push(entry.key); next(); });
+  })();
+}
+})();
+</script>
+</body>
+</html>

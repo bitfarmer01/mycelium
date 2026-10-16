@@ -1,0 +1,85 @@
+# ORDER
+
+source_link: https://surrealdb.com/docs/reference/query-language/clauses/order
+
+# `ORDER` clause
+
+To sort records, SurrealDB allows ordering on multiple fields and nested fields. Use the `ORDER` clause to specify a comma-separated list of field names that should be used to order the resulting records.
+
+While not necessary to parse, the `ORDER` clause can be followed with `BY` to make queries more readable.
+
+The `ASC` and `DESC` keywords can be used to specify whether results should be sorted in an ascending or descending manner. The `COLLATE` keyword can be used to use Unicode collation when ordering text in string values, ensuring that different cases, and different languages are sorted in a consistent manner. Finally, the `NUMERIC` can be used to correctly sort text which contains numeric values.
+
+`COLLATE` can also be used to order by lexical instead of unicode order. For example, 'á' comes after 'z' by default (Unicode sorting) but with `COLLATE` 'á' comes before 'z'.
+
+From SurrealDB 3.3, sort fields do not need to appear in the `SELECT` list. Sorting runs before projection, so you can order by a field that is omitted from the result:
+
+```surql
+-- Sort by `at` without returning it
+SELECT event, subject FROM audit_log ORDER BY at;
+```
+
+The clause takes field paths rather than expressions, so `ORDER BY string::len(name)` does not parse. To sort on a computed value, alias it in the `SELECT` list and order by that alias:
+
+```surql
+SELECT name, string::len(name) AS length FROM person ORDER BY length DESC;
+```
+
+The same applies to a field whose name is held in a parameter. `ORDER BY $field` does not parse, because the clause takes a field path and not a value. Select the field with [`type::field()`](/docs/reference/query-language/functions/database-functions/type#typefield) under an alias and order by the alias. A dotted path such as `'address.city'` works as well:
+
+```surql
+CREATE person:1 SET name = 'Boromir', age = 30;
+CREATE person:2 SET name = 'Allanon', age = 40;
+CREATE person:3 SET name = 'Cyndane', age = 20;
+
+LET $field = 'age';
+SELECT name, type::field($field) AS sort_key FROM person ORDER BY sort_key DESC;
+```
+
+```surql title="Output"
+[
+ { name: 'Allanon', sort_key: 40 },
+ { name: 'Boromir', sort_key: 30 },
+ { name: 'Cyndane', sort_key: 20 }
+]
+```
+
+The sort direction cannot come from a parameter either, so `ASC` or `DESC` is written in the query. To leave the alias out of the result, select from this query in an outer `SELECT` that names the fields to return.
+
+`SPLIT` and `GROUP` still require their fields to appear in the selection.
+
+## Syntax
+
+```syntax title="Clause Syntax"
+[ ORDER [ BY ]
+ @field [ COLLATE ] [ NUMERIC ] [ ASC | DESC ], ...
+ | RAND()
+]
+```
+
+## Examples
+
+```surql
+SELECT * FROM <table> ORDER BY <field> ASC;
+```
+
+```surql
+
+-- Order records randomly
+SELECT * FROM <table> ORDER BY rand();
+
+-- Order records descending by a single field
+SELECT * FROM <table> ORDER BY <field> DESC;
+
+-- Order records by multiple fields independently
+SELECT * FROM <table> ORDER BY <field> ASC, <field2> DESC;
+
+-- Order text fields with lexical collation instead of Unicode order
+SELECT * FROM <table> ORDER BY <field> COLLATE ASC;
+
+-- Order text fields with which include numeric values
+SELECT * FROM <table> ORDER BY <field> NUMERIC ASC;
+
+-- COLLATE and NUMERIC can be used together
+SELECT * FROM <table> ORDER BY <field> COLLATE NUMERIC ASC;
+```

@@ -1,0 +1,126 @@
+# WHERE
+
+source_link: https://surrealdb.com/docs/reference/query-language/clauses/where
+
+# `WHERE` clause
+
+The `WHERE` clause can be used to specify a condition that acts as a filter. You can use the `WHERE` clause to either filter the result of the FROM clause in a `SELECT` statement or specify which records to operate on in an `UPDATE`, `MERGE`, or `DELETE` statement.
+
+It can also be used in special cases when working with conditions in [`DEFINE FUNCTION`](/docs/reference/query-language/statements/define/function) statements or when asserting access control in [`DEFINE TABLE`](/docs/reference/query-language/statements/define/table) & [`DEFINE FIELD`](/docs/reference/query-language/statements/define/field) statements.
+
+## Syntax
+
+```syntax title="Clause Syntax"
+STATEMENT
+ [WHERE condition;]
+
+```
+
+## Conditional record selection
+
+The most common use case for the `WHERE` clause is to filter the result of the `SELECT` statement. It is particularly useful when you want to select a subset of records from a table based on a condition.
+
+```surql
+SELECT @fields FROM <TABLE_NAME> WHERE <CONDITION> = <VALUE>;
+```
+
+When fetching records from a table, the `WHERE` clause is used to filter the records that are returned.
+
+### Optional filters
+
+A search form often has filters that the user may or may not fill in. One query can handle every combination: pair each condition with a check that its parameter is `NONE`, so that an unset parameter makes its condition true and filters nothing.
+
+```surql
+CREATE product:1 SET name = 'mug', category = 'kitchen', price = 8;
+CREATE product:2 SET name = 'pan', category = 'kitchen', price = 30;
+CREATE product:3 SET name = 'lamp', category = 'home', price = 25;
+
+LET $category = 'kitchen';
+
+SELECT VALUE name FROM product
+WHERE ($category IS NONE OR category = $category)
+ AND ($max_price IS NONE OR price <= $max_price)
+ORDER BY name;
+```
+
+```surql title="Output"
+['mug', 'pan']
+```
+
+With neither parameter set, the same query returns all three products. With both set (`$max_price = 10` as well), it returns only `mug`. A parameter that was never defined is `NONE`, so the query works whether a client omits the variable or sends `NONE` for it.
+
+## Conditional record alteration
+
+The `WHERE` clause can also be used to specify which records to operate on in an `UPDATE`, `MERGE`, or `DELETE` statement.
+
+```surql
+UPDATE [TABLE_NAME] SET [FIELDS] WHERE [CONDITION] = [VALUE];
+```
+
+## Setting conditions in `DEFINE FUNCTION` statements
+
+```surql
+/**[test]
+
+[[test.results]]
+value = "NONE"
+
+*/
+-- Define a function that checks if a relation exists between two nodes
+DEFINE FUNCTION fn::relation_exists(
+ $in: record,
+ $tb: string,
+ $out: record
+) -> bool {
+ -- Check if a relation exists between the two nodes.
+ LET $results = SELECT VALUE id FROM type::table($tb) WHERE in = $in
+ AND out = $out;
+ -- Return true if a relation exists, false otherwise
+ RETURN array::len($results) > 0;
+};
+```
+
+## Setting permissions conditions in `DEFINE TABLE` statements
+
+The `WHERE` clause can be used to specify the conditions for the permissions of a table and based on the conditions, the permissions are applied to the table CRUD operations.
+
+```surql
+/**[test]
+
+[[test.results]]
+value = "NONE"
+
+*/
+-- Specify access permissions for the 'post' table
+DEFINE TABLE post SCHEMALESS
+ PERMISSIONS
+ FOR select
+ -- Published posts can be selected
+ WHERE published = true
+ -- A user can select all their own posts
+ OR user = $auth.id
+ FOR create, update
+ -- A user can create or update their own posts
+ WHERE user = $auth.id
+ FOR delete
+ -- A user can delete their own posts
+ WHERE user = $auth.id
+ -- Or an admin can delete any posts
+ OR $auth.admin = true
+;
+```
+
+```surql
+/**[test]
+
+[[test.results]]
+value = "NONE"
+
+*/
+
+-- Define a relation table, and constrain the type of relation which can be stored
+DEFINE TABLE assigned_to SCHEMAFULL TYPE RELATION IN tag OUT sticky
+ PERMISSIONS
+ FOR create, select, update, delete
+ WHERE in.owner == $auth.id AND out.author == $auth.id;
+```

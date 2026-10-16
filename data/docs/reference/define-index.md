@@ -1,0 +1,880 @@
+# DEFINE INDEX
+
+source_link: https://surrealdb.com/docs/reference/query-language/statements/define/indexes
+
+# `DEFINE INDEX` statement
+
+> [!NOTE]
+> Before SurrealDB version 3.0.0, the `FULLTEXT ANALYZER` clause used the syntax `SEARCH ANALYZER`.
+
+Just like in other databases, SurrealDB uses indexes to help optimise query performance. An index can consist of one or more fields in a table and can enforce a uniqueness constraint. If you don't intend for your index to have a uniqueness constraint, then the fields you select for your index should have a high degree of cardinality, meaning that there is a high amount of diversity between the data in the indexed table records.
+
+## Requirements
+
+- You must be authenticated as a root owner or editor, namespace owner or editor, or database owner or editor before you can use the `DEFINE INDEX` statement.
+- [You must select your namespace and database](/docs/reference/query-language/statements/use) before you can use the `DEFINE INDEX` statement.
+
+## Statement syntax
+
+ 
+**SurrealQL Syntax**
+
+```syntax title="Basic syntax"
+DEFINE INDEX [ OVERWRITE | IF NOT EXISTS ] @name
+ ON [ TABLE ] @table
+ [ FIELDS | COLUMNS ] @fields
+ [ @special_clause ]
+ [ COMMENT @string ]
+ [ CONCURRENTLY ]
+ [ DEFER ]
+```
+
+The `@special_clause` part of the statement is an optional part in which an index can be declared for special usage such as guaranteeing unique values, full-text search, and so on. The available clauses are:
+
+```syntax title="Special index clauses"
+UNIQUE
+| COUNT [ WHERE @condition ]
+| FULLTEXT ANALYZER @analyzer [ BM25 [(@k1, @b)] ] [ HIGHLIGHTS ]
+| HNSW DIMENSION @dimension [ TYPE @type ] [ DIST @distance ] [ EFC @efc ] [ M @m ]
+| DISKANN DIMENSION @dimension [ TYPE @type ] [ DIST @distance ] [ DEGREE @degree ] [ L_BUILD @l_build ] [ ALPHA @alpha ] [ HASHED_VECTOR ]
+```
+
+ 
+**Railroad Diagram**
+
+## Index types
+
+SurrealDB offers a range of indexing capabilities designed to optimise data retrieval and search efficiency.
+
+### Standard (non-unique) index
+
+An index without any special clauses allows for the indexing of attributes that may have non-unique values, facilitating efficient data retrieval. Non-unique indexes help index frequently appearing data in queries that do not require uniqueness, such as categorization tags or status indicators.
+
+The following example creates a non-unique index for an age field on a user table.
+
+```surql
+-- optimise queries looking for users of a given age
+DEFINE INDEX userAgeIndex ON TABLE user FIELDS age;
+```
+
+Besides `=` and comparisons such as `>` and `<`, a standard index is used for a range with `IN`, and for a string prefix with [`string::starts_with()`](/docs/reference/query-language/functions/database-functions/string#stringstarts_with). Before SurrealDB 3.3.1, these two scanned the whole table.
+
+```surql
+-- Both use the index from 3.3.1
+SELECT * FROM user WHERE age IN 18..30;
+SELECT * FROM user WHERE string::starts_with(name, 'Ann');
+```
+
+#### Indexing an array field
+
+On a field that holds an array, a standard index has one entry for each element. A condition still compares the whole value, so with `tags = ['a', 'b']`, the condition `tags = 'a'` is false and `tags = ['a', 'b']` is true, with or without the index. To find the records whose array holds an element, use [`CONTAINS`](/docs/reference/query-language/language-primitives/operators#contains-or-) or `CONTAINSANY` and index the elements with `tags.*`:
+
+```surql
+DEFINE INDEX post_tags ON post FIELDS tags.*;
+
+SELECT * FROM post WHERE tags CONTAINS 'a';
+SELECT * FROM post WHERE tags CONTAINSANY ['a', 'c'];
+```
+
+An index declared as `FIELDS tags` is not used for `CONTAINS`, and the query scans the table instead. The field may still hold a string written before its type was declared, and `CONTAINS` on a string looks for a substring, which an element lookup cannot find. For the same reason, use `tags.*` only when every stored value of the field is an array: a string is indexed whole, so `CONTAINS` through a `tags.*` index does not find a substring inside it.
+
+> [!WARNING]
+> Before SurrealDB 3.3.1, the query planner treated a `FIELDS tags` index on an array field as if each record held a single value, so a query could return different records with the index than without it. `count()` with `tags = 'a'` counted the records whose array held `'a'`, `tags = ['a', 'b']` returned nothing, a range such as `tags > 'a'` could return a record twice, and `ORDER BY tags` followed the order of the index entries. From 3.3.1 these return the same results as without the index on a field whose type is an array, such as `array<string>` or `option<array<string>>`, and the index does not need to be rebuilt. A field with no declared type, or a type that also allows a value that is not an array, keeps the earlier behaviour. So does a server started with [`SURREAL_PLANNER_STRATEGY`](/docs/reference/cli/db/environment-variables) set to `compute-only`.
+
+### Unique index
+
+Ensures each value in the index is unique. A unique index helps enforce uniqueness across records by preventing duplicate entries in fields such as user IDs, email addresses, and other unique identifiers.
+
+The following example creates a unique index for the email address field on a user table.
+
+```surql
+/**[test]
+
+[[test.results]]
+value = "NONE"
+
+*/
+
+-- Makes sure that the email address in the user table is always unique
+DEFINE INDEX userEmailIndex ON TABLE user FIELDS email UNIQUE;
+```
+
+The created index can be tested using the [`INFO` statement](/docs/reference/query-language/statements/info).
+
+```surql
+INFO FOR TABLE user;
+```
+The `INFO` statement will help you understand what indexes are defined in your `TABLE`.
+
+```surql
+{
+ "events": {},
+ "fields": {},
+ "indexes": {
+ "userEmailIndex": {
+ sql: "DEFINE INDEX userEmailIndex ON user FIELDS email UNIQUE"
+ }
+ },
+ "lives": {},
+ "tables": {}
+}
+```
+
+As a `UNIQUE` index is defined on the `email` field, a duplicate entry for that field will throw an error.
+
+```surql
+-- Create a user record and set an email ID.
+CREATE user:1 SET email = 'test@surrealdb.com';
+```
+
+```surql title="Output"
+[
+ {
+ "email": "test@surrealdb.com",
+ "id": "user:1"
+ }
+]
+```
+
+Creating another record with the same email ID will throw an error.
+
+```surql
+-- Create another user record and set the same email ID.
+CREATE user:2 SET email = 'test@surrealdb.com';
+```
+
+```surql title="Output"
+Database index `userEmailIndex` already contains 'test@surrealdb.com',
+with record `user:1`
+```
+
+To set the same email for `user:2`, the original record must be deleted
+
+```surql
+DELETE user:1;
+CREATE user:2 SET email = 'test@surrealdb.com'
+```
+```text
+[
+ {
+ "email": "test@surrealdb.com",
+ "id": "user:2"
+ }
+]
+```
+
+A `UNIQUE` index does not treat an empty field as a duplicate. Any number of records can leave the field out (`NONE`) or set it to `NULL`, so a unique field can still be optional.
+
+```surql
+DEFINE FIELD email ON user TYPE option<string | null>;
+DEFINE INDEX userEmailIndex ON user FIELDS email UNIQUE;
+
+CREATE user:1;
+CREATE user:2;
+CREATE user:3 SET email = NULL;
+CREATE user:4 SET email = NULL;
+
+SELECT count() FROM user GROUP ALL;
+```
+
+```surql title="Output"
+[{ count: 4 }]
+```
+
+#### Conditional uniqueness
+
+A `UNIQUE` index applies to every record in the table. `WHERE` is accepted only on a `COUNT` index, so `DEFINE INDEX ... UNIQUE WHERE ...` is a parse error. Because a unique index ignores `NONE`, a computed field that holds the value only when the condition is true gives the same effect as a partial unique index. The following index allows any number of inactive plans for an email address, but only one active plan:
+
+```surql
+DEFINE FIELD email ON plan TYPE string;
+DEFINE FIELD active ON plan TYPE bool;
+DEFINE FIELD active_email ON plan VALUE IF active { email } ELSE { NONE };
+DEFINE INDEX one_active_plan ON plan FIELDS active_email UNIQUE;
+
+CREATE plan SET email = 'ana@example.com', active = false;
+CREATE plan SET email = 'ana@example.com', active = false;
+CREATE plan SET email = 'ana@example.com', active = true;
+CREATE plan SET email = 'ana@example.com', active = true;
+```
+
+```text title="Error output"
+Database index `one_active_plan` already contains 'ana@example.com', with record `plan:...`
+```
+
+A unique index stays correct when transactions write at the same time: of two concurrent inserts with the same value, one commits and the other fails with a retryable transaction conflict. See [Unique indexes under concurrent writes](/docs/learn/querying/concepts-and-guides/transactions#unique-indexes-under-concurrent-writes).
+
+On a field that holds an array, an index has one entry for each element rather than one for the whole array. A `UNIQUE` index on such a field therefore makes every element unique across all records, so two records cannot share any element:
+
+```surql
+DEFINE INDEX unique_tag ON post FIELDS tags UNIQUE;
+
+CREATE post:1 SET tags = ['a', 'b'];
+CREATE post:2 SET tags = ['b', 'c'];
+```
+
+```text title="Error output"
+Database index `unique_tag` already contains 'b', with record `post:1`
+```
+
+To make the array as a whole unique instead, so that two records cannot have the same tags but may share some, end the field with [`...`](/docs/reference/query-language/language-primitives/idioms#flattening). The index then has one entry for the whole array:
+
+```surql
+DEFINE INDEX unique_tags ON post FIELDS tags... UNIQUE;
+
+CREATE post:1 SET tags = ['a', 'b'];
+CREATE post:2 SET tags = ['b', 'c'];
+CREATE post:3 SET tags = ['a', 'b'];
+```
+
+```text title="Error output"
+Database index `unique_tags` already contains ['a', 'b'], with record `post:1`
+```
+
+[`INFO FOR TABLE`](/docs/reference/query-language/statements/info) shows this index as `FIELDS tags…`, with a single ellipsis character, which SurrealQL also accepts in place of `...`. The order of the elements counts, so `['b', 'a']` is a different value from `['a', 'b']`. To treat the two as the same, index a field that holds the array sorted and converted to a single value:
+
+```surql
+DEFINE FIELD tag_key ON post VALUE <string> tags.sort();
+DEFINE INDEX unique_tags ON post FIELDS tag_key UNIQUE;
+```
+
+A `UNIQUE` index compares values exactly, so `'Bob'` and `'bob'` count as different. For a case-insensitive unique value, end the indexed field with a method call that normalises it, and the index stores the result:
+
+```surql
+DEFINE INDEX unique_name ON user FIELDS name.lowercase() UNIQUE;
+
+CREATE user:1 SET name = 'Bob';
+CREATE user:2 SET name = 'bOB';
+```
+
+```text title="Error output"
+Database index `unique_name` already contains 'bob', with record `user:1`
+```
+
+A query uses this index when its condition repeats the same expression, such as `WHERE name.lowercase() = 'bob'`. A condition on `name` alone does not, and scans the table instead.
+
+The function-call form `string::lowercase(name)` is not accepted in `FIELDS`, and a record where `name` is `NONE` or not a string fails the write, because `lowercase()` cannot run on it. Alternatively, store the normalised value in a field of its own and index that field, which keeps the lowercase value visible in query results:
+
+```surql
+DEFINE FIELD name_key ON user VALUE name.lowercase();
+DEFINE INDEX unique_name ON user FIELDS name_key UNIQUE;
+```
+
+### Composite index
+
+A composite index spans multiple fields of a table. Composite indexes are mainly used to create a unique index when the definition of what is unique pertains to more than one field.
+
+```surql
+/**[test]
+
+[[test.results]]
+value = "NONE"
+
+*/
+
+-- Create an index on the account and email fields of the user table
+DEFINE INDEX test ON user FIELDS account, email UNIQUE;
+```
+
+When more than one of the fields holds an array, the index has one entry for every combination of their elements. A record with `tags = ['a', 'b']` and `authors = ['x', 'y']` gives four entries, so a `UNIQUE` index refuses any later record that repeats one of those four pairs:
+
+```surql
+DEFINE INDEX tag_author ON post FIELDS tags, authors UNIQUE;
+
+CREATE post:1 SET tags = ['a', 'b'], authors = ['x', 'y'];
+CREATE post:2 SET tags = ['a'], authors = ['y'];
+```
+
+```text title="Error output"
+Database index `tag_author` already contains ['a', 'y'], with record `post:1`
+```
+
+A query that uses such an index returns each record once, however many of its entries match.
+
+> [!WARNING]
+> Before SurrealDB 3.3.1, an index over two or more array fields stored only some of the combinations, so the `CREATE post:2` above succeeded. An index written by an earlier release stays incomplete after upgrading until you run [`REBUILD INDEX`](/docs/reference/query-language/statements/rebuild) on it. Earlier releases could also return a record once for each matching entry when a query used a composite index with an array field, such as `FIELDS account, emails.*.address` queried by `account` alone. That needs no action after upgrading.
+
+#### Array-element composite indexes
+
+From SurrealDB 3.1.0, a composite index can lead with an **array-element** field (`tags.*`) so containment predicates combine with ordering on a trailing field without a full table scan. This supports patterns such as `WHERE tags CONTAINS 'x' ORDER BY age DESC LIMIT N` and the multi-value forms `CONTAINSANY` / `ANYINSIDE` on array fields.
+
+```surql
+DEFINE INDEX tag_age ON article FIELDS tags.*, age;
+
+-- Bounded index walk (check with EXPLAIN FULL)
+SELECT * FROM article
+WHERE tags CONTAINS 'release-notes'
+ORDER BY age DESC
+LIMIT 10;
+```
+
+`CONTAINSALL` / `ALLINSIDE` may still apply a residual filter above the union when intersection semantics require it. See [operators](/docs/reference/query-language/language-primitives/operators) and [`EXPLAIN`](/docs/reference/query-language/statements/explain) to confirm the planner choice.
+
+A composite index can include more than one array field, and a record can hold arrays in all of them. A query uses the index for the condition on the first field, and checks the condition on the second field against each record that the index returns:
+
+```surql
+DEFINE INDEX tags_sizes ON product FIELDS tags.*, sizes.*;
+CREATE product:jumper SET tags = ["wool", "winter"], sizes = ["S", "M"];
+CREATE product:shirt SET tags = ["cotton"], sizes = ["M", "L"];
+
+EXPLAIN SELECT id FROM product WHERE tags CONTAINS "wool" AND sizes CONTAINS "M";
+```
+
+```text title="Output"
+SelectProject [ctx: Db] [projections: id]
+ Filter [ctx: Db] [predicate: sizes CONTAINS 'M']
+ IndexScan [ctx: Db] [index: tags_sizes, access: ['wool'], direction: Forward]
+```
+
+### Count index
+
+A count index maintains a running count of records on a table. It is used with `count()` and `GROUP ALL` in a query. SurrealDB stores incremental count deltas and compacts them in the background.
+
+Count indexes come in two forms:
+
+- **`COUNT`** - counts every record in the table. Used with `SELECT count() FROM <table> GROUP ALL` (no `WHERE`).
+- **`COUNT WHERE <condition>`** - counts only records that match the condition. Used with `SELECT count() FROM <table> WHERE <condition> GROUP ALL` when the query `WHERE` clause **exactly matches** the index condition.
+
+As a count index is declared on a table as a whole, it cannot use the `FIELDS` / `COLUMNS` clause.
+
+#### Full-table counts
+
+For `SELECT count() FROM <table> GROUP ALL`, SurrealDB already uses a `CountScan` fast path that counts record keys in storage without deserialising every record. An unconditional `COUNT` index is optional here; it can reduce work further once count deltas have been compacted, but a freshly built index on a large existing table may hold millions of delta entries until compaction runs.
+
+```surql
+DEFINE INDEX idx ON indexed_reading COUNT;
+
+FOR $_ IN 0..100000 {
+ CREATE reading SET temperature = rand::int(0, 10);
+};
+
+FOR $_ IN 0..100000 {
+ CREATE indexed_reading SET temperature = rand::int(0, 10);
+};
+
+-- Wait a moment before running these two
+-- queries to ensure the index is built
+SELECT count() FROM reading GROUP ALL;
+SELECT count() FROM indexed_reading GROUP ALL;
+```
+
+#### Filtered counts (`COUNT WHERE`)
+
+Use `COUNT WHERE` when you repeatedly need `SELECT count() … WHERE … GROUP ALL` and do not want to scan and deserialise every record. The planner uses `IndexCountScan` when the query `WHERE` matches the index condition exactly (same expression as written in `DEFINE INDEX`).
+
+```surql
+DEFINE TABLE item SCHEMALESS;
+DEFINE INDEX item_active_count ON item COUNT WHERE status = "active";
+
+CREATE item:a SET status = "active";
+CREATE item:b SET status = "active";
+CREATE item:c SET status = "inactive";
+
+SELECT count() FROM item WHERE status = "active" GROUP ALL;
+
+EXPLAIN ANALYZE SELECT count() FROM item WHERE status = "active" GROUP ALL;
+```
+
+Requirements for the filtered fast path:
+
+- `GROUP ALL` must be present.
+- The query `WHERE` must match the index condition exactly (not a broader or different predicate).
+- The index build must be complete (`INFO FOR INDEX …` shows `ready`).
+- Field-level `SELECT` permissions on fields in the condition must not block index-only counting.
+
+If the `WHERE` clause is not an exact match, SurrealDB falls back to a full table scan, filter, and count.
+
+#### When to use which
+
+For many applications, a **standard B-tree index** (`FIELDS` / `COLUMNS`) is the default for filtered counts. Recent planner improvements let a covering B-tree use the same `IndexCountScan` fast path as a `COUNT WHERE` index, so the two often perform similarly at query time.
+
+That does **not** make count indexes obsolete, however, as they solve a narrower problem and have a smaller storage footprint.
+
+* If you would add `DEFINE INDEX … FIELDS status` anyway, a separate `COUNT WHERE status = "active"` index is usually redundant. In this case, a standard B-tree is preferred.
+
+* When to use `COUNT WHERE` instead: materialised cardinality for a fixed condition you do not want to back with a B-tree; compound predicates without a covering index; or a dedicated counter separate from lookup indexes.
+
+The following chart sums up a few use cases and when to prefer one vs. the other.
+
+| Goal | Prefer |
+| --- | --- |
+| `count() … GROUP ALL` with no `WHERE` | Nothing extra required; `CountScan` counts record keys. Unconditional `COUNT` is optional. |
+| `count() … WHERE field = value GROUP ALL` on a field you already filter on | `FIELDS field` B-tree (also supports `SELECT`, `ORDER BY`, and other predicates) |
+| Many per-value counts on the same field | One B-tree on that field |
+| One fixed combined predicate (`IN`, `AND`, etc.) counted repeatedly | `COUNT WHERE` with the **exact** same expression in the query |
+| Fast counts for a predicate but **no** B-tree on those fields | `COUNT WHERE` |
+| Compound `WHERE` with no covering composite B-tree | `COUNT WHERE` with the exact compound condition |
+
+#### Storage footprint
+
+Count indexes and B-tree indexes store different shapes of data, so size is not the same even when query performance is similar.
+
+A **B-tree index** stores one entry per indexed record: encoded field value(s) plus the record id in the key. Storage grows **with the number of records** in the table (O(n) for that index).
+
+A **`COUNT WHERE` index** does not store per-record field keys. It appends small **delta entries** (`IndexCountKey`) when records enter or leave the predicate, then **compacts** them into a single aggregate entry in the background. In steady state, footprint is usually **much smaller** than a B-tree on the same field, often a handful of keys rather than one per record.
+
+So `COUNT WHERE` can be attractive when you need fast filtered counts **without** paying the per-record storage of a B-tree if it will not be used for anything else.
+
+To compare indexed and non-indexed performance, the `WITH NOINDEX` clause can be used.
+
+```surql
+-- Slow path: scan every record
+SELECT count() FROM item WITH NOINDEX WHERE status = "active" GROUP ALL;
+
+-- Fast path: count index deltas (or B-tree keys if a covering index exists)
+SELECT count() FROM item WHERE status = "active" GROUP ALL;
+```
+
+#### Multiple conditions
+
+As each `COUNT WHERE` index tracks one fixed predicate, it does not accelerate several different counts unless each query repeats the **exact** condition stored in the index.
+
+```surql
+DEFINE INDEX openish_count ON person COUNT
+ WHERE status IN ["active", "non-active", "delayed"];
+
+-- Fast only when the WHERE matches the index exactly
+SELECT count() FROM person
+ WHERE status IN ["active", "non-active", "delayed"]
+ GROUP ALL;
+```
+
+In the above example, it does not also speed up `WHERE status = "active" GROUP ALL` or other subsets.
+
+For separate per-status totals, one `FIELDS status` B-tree is usually simpler than one `COUNT WHERE` index per value. See [When to use which](/docs/reference/query-language/statements/define/indexes#when-to-use-which).
+
+Use [`EXPLAIN ANALYZE`](/docs/reference/query-language/statements/explain) to confirm `IndexCountScan` is selected. If the query `WHERE` differs even slightly from the index condition, SurrealDB falls back to a full scan.
+
+#### Other `COUNT` syntax notes
+
+```surql
+-- Other clauses like `COMMENT` are fine
+DEFINE INDEX idx ON users COUNT
+ COMMENT "Users are expected to grow substantially so index the count"
+ CONCURRENTLY;
+
+-- Conditional count indexes
+DEFINE INDEX active_users ON users COUNT WHERE status = "active" CONCURRENTLY;
+
+-- But not `FIELD`
+DEFINE INDEX idx2 ON person FIELD name;
+```
+
+```surql title="Output"
+'There was a problem with the database: Parse error: Unexpected token `FIELD`, expected Eof
+ --> [1:29]
+ |
+1 | DEFINE INDEX idx2 ON person FIELD name;
+ | ^^^^^
+'
+```
+
+### Full-text search (`FULLTEXT`) index
+
+Enables efficient searching through textual data, supporting advanced text-matching features like proximity searches and keyword highlighting.
+
+The [Full-Text search](/docs/learn/data-models/full-text-search/overview) index helps implement comprehensive search functionalities in applications, such as searching through articles, product descriptions, and user-generated content.
+
+The following example creates a full-text search index for a `name` field on a `user` table.
+
+```surql
+/**[test]
+
+[[test.results]]
+value = "NONE"
+
+[[test.results]]
+value = "NONE"
+
+*/
+
+-- Define the an analyzer with
+DEFINE ANALYZER example_ascii TOKENIZERS class FILTERS ascii;
+-- Since 3.0.0: only FULLTEXT used to benefit from concurrent full-text search
+DEFINE INDEX userNameIndex ON TABLE user FIELDS name FULLTEXT ANALYZER example_ascii BM25 HIGHLIGHTS;
+```
+
+- `SEARCH` or `FULLTEXT`: By using the `SEARCH` keyword, you enable full-text search on the specified field.
+- `ANALYZER ascii`: Uses a custom [analyzer](/docs/reference/query-language/statements/define/analyzer) called `example_ascii` which uses the class tokenizer and `ascii` filter to analyse the text input.
+- `BM25`: Ranking algorithm used for relevance scoring. BM25 weighs a term by how rare it is, and clamps that weight to zero for any term appearing in half or more of the indexed documents, which makes [`search::score`](/docs/reference/query-language/functions/database-functions/search#searchscore) return `0` for it. See [why a score can be 0](/docs/learn/data-models/full-text-search/scoring-and-ranking#why-a-score-can-be-0).
+- `HIGHLIGHTS`: Allows keyword highlighting in search results output when using the [`search::highlight`](/docs/reference/query-language/functions/database-functions/search#searchhighlight) function
+- `FIELDS`: a full-text search index can only be used on one field at a time. To use full-text search on more than one field, use a separate `DEFINE INDEX` statement for each one.
+
+#### A field that is unique and searchable
+
+An index has a single kind, such as `UNIQUE` or `FULLTEXT`. For a field that has to be both unique and searchable, define two indexes on it:
+
+```surql
+DEFINE ANALYZER simple TOKENIZERS blank FILTERS lowercase;
+DEFINE INDEX title_unique ON book FIELDS title UNIQUE;
+DEFINE INDEX title_search ON book FIELDS title FULLTEXT ANALYZER simple BM25;
+
+CREATE book:1 SET title = 'The Grey Book';
+SELECT id FROM book WHERE title @@ 'grey';
+```
+
+```surql title="Output"
+[{ id: book:1 }]
+```
+
+Both indexes are used without naming them: the query planner chooses the index by the operator in the condition, so `WHERE title = 'The Grey Book'` uses `title_unique` and `WHERE title @@ 'grey'` uses `title_search`. [`WITH INDEX`](/docs/reference/query-language/statements/select#the-with-clause) is not needed here, and naming the index that cannot serve the operator, as in `WITH INDEX title_search` with `=`, makes the query scan the table instead.
+
+> [!WARNING]
+> Writing both kinds in one statement, as in `DEFINE INDEX title ON book FIELDS title UNIQUE FULLTEXT ANALYZER simple`, does not return an error, but only the last kind is kept. That index is full-text only and accepts duplicate titles. Check the stored definition with `INFO FOR TABLE`.
+
+#### `FULLTEXT` vs. `SEARCH`
+
+Since version 3.0.0, using `FULLTEXT ANALYZER` is the syntax used for a text analyzer. The `FULLTEXT` clause allows for more performant [concurrent full-text search](https://github.com/surrealdb/surrealdb/pull/5571), as well as the ability to [use the `OR` operator](https://github.com/surrealdb/surrealdb/pull/6179).
+
+## Vector search indexes
+
+Vector search indexes in SurrealDB support efficient [k-nearest neighbors](https://en.wikipedia.org/wiki/K-nearest_neighbors_algorithm) (kNN) and [Approximate Nearest Neighbor](https://en.wikipedia.org/wiki/Nearest_neighbor_search) (ANN) operations, which are used to perform similarity searches within complex, high-dimensional datasets and data types. Refer to the [Vector Search Cheat Sheet](/docs/learn/data-models/vector-search/vector-indexes#vector-search-cheat-sheet) for the parameters allowed.
+
+> [!NOTE]
+> After a large insert or update, a vector index stores the new records separately until a background process merges them into its graph. Searches return correct results throughout, but are slower until that merge completes. [`INFO FOR INDEX`](/docs/reference/query-language/statements/info#index-information) reports this as `building.compacting`, which is separate from `building.status`.
+
+> [!WARNING]
+> From 3.0.0 until 3.3.1, an HNSW or DISKANN index lost track of records when more than nine of them held an identical vector. KNN results left out the tenth and later records, and could return fewer than `k` results after such records were deleted. SurrealDB 3.3.1 fixes this for new writes, but an index that was already affected stays that way until it is rebuilt. After upgrading, run [`REBUILD INDEX`](/docs/reference/query-language/statements/rebuild) on each vector index whose table can hold more than nine records with the same vector, such as duplicated embeddings or a placeholder vector.
+
+> [!WARNING]
+> Before SurrealDB 3.3.1, a KNN query could return fewer than `k` results for a user whose table `SELECT` permission hides some records. With no other condition in the `WHERE` clause, as in `WHERE embedding <|10|> $query`, hidden records took places in the top `k` and were then removed, so a record user who can see few of the records could get no results at all. Adding any other condition to the `WHERE` clause avoided this. A DISKANN index could also return no results for a query with a `SELECT` permission or another `WHERE` condition once the index had been compacted. SurrealDB 3.3.1 applies the permission while it searches, so both return the nearest records that the user can see.
+
+### Types
+
+When defining a vector index with [HNSW](#hnsw-hierarchical-navigable-small-world), you can define the types the vector will be stored in. The `TYPE` clause is optional and can be used to specify the data type of the vector. SurrealDB supports the following types:
+`F64` | `F32` | `I64` | `I32` | `I16`
+
+- `F64`: Represents 64-bit floating-point numbers (double precision floating-point numbers).
+- `F32`: Represents 32-bit floating-point numbers (single precision floating-point numbers).
+- `I64`: Represents 64-bit signed integers.
+- `I32`: Represents 32-bit signed integers.
+- `I16`: Represents 16-bit signed integers.
+
+> [!NOTE]
+> In SurrealDB the default type for vectors is `F32`.
+
+[DISKANN](#diskann-disk-based-approximate-nearest-neighbours) indexes, available from SurrealDB 3.1, accept a **narrower** set of element types: `F32`, `F16`, `I8`, and `U8` only, and only a subset of distance metrics - see the [DISKANN](#diskann-disk-based-approximate-nearest-neighbours) section below.
+
+For example, to define a vector index with 64-bit signed integers, you can use the following query:
+
+```surql
+DEFINE INDEX idx_hnsw_embedding
+ ON Document FIELDS items.embedding HNSW DIMENSION 4 TYPE I64;
+```
+
+### HNSW (Hierarchical Navigable Small World)
+
+This method uses a graph-based approach to efficiently navigate and search in high-dimensional spaces.
+While it is an approximate technique, it offers a high-performance balance between speed and accuracy, making it ideal for very large datasets.
+
+> [!NOTE]
+> Keep in mind the in-memory nature of HNSW when considering system resource allocation.
+
+<SurrealistMini orientation="horizontal" query="CREATE pts:3 SET point = [8,9,10,11];
+DEFINE INDEX mt_pts ON pts FIELDS point HNSW DIMENSION 4 DIST EUCLIDEAN EFC 150 M 12;
+// See output for info on EFC,M,MO AND LM
+INFO FOR TABLE pts;
+SELECT id FROM pts WHERE point <|10,40|> [2,3,4,5];" />
+
+In the example above, you may notice the `EFC` and `M` parameters. These are optional to your query but are parameters of the [HNSW algorithm](https://arxiv.org/abs/1603.09320) and can be used to tune the index for better performance.
+
+- M (Max Connections per Element):
+Defines the maximum number of bidirectional links (neighbors) per node in each layer of the graph, except for the lowest layer. This parameter controls the connectivity and overall structure of the network. Higher values of M generally improve search accuracy but increase memory usage and construction time.
+
+- EFC (EF construction):
+Stands for "exploration factor during construction." This parameter determines the size of the dynamic list for the nearest neighbor candidates during the graph construction phase. A larger efConstruction value leads to a more thorough construction, improving the quality and accuracy of the search but increasing construction time. The default value is 150.
+
+- M0 (Max Connections in the Lowest Layer):
+Similar to M, but specifically for the bottom layer (the base layer) of the graph. This layer contains the actual data points. M0 is often set to twice the value of M to enhance search performance and connectivity at the base layer, at the cost of increased memory usage.
+
+- LM (Multiplier for Level Generation):
+Used to determine the maximum level l for a new element during its insertion into the hierarchical structure. It is used in the formula l←⌊−ln⁡(unif(0..1))⋅mL⌋, where unif(0..1) is a uniform random variable between 0 and 1. This parameter influences the distribution of elements across different levels, impacting the overall balance and efficiency of the search structure.
+
+> [!NOTE]
+> You can only provide TYPE, M, and EFC. SurrealDB automatically computes M0 and LM with the most appropriate value. If not specified, M AND EFC are set to 12 and 150, respectively. Refer to the [Vector Search Cheat Sheet](/docs/learn/data-models/vector-search/vector-indexes#vector-search-cheat-sheet) for the parameters allowed.
+
+#### Memory cache usage for HNSW indexes
+
+HNSW vector search caches element vectors in a bounded memory cache, reducing memory spikes and improving stability under load. The cache is a single budget **shared across every HNSW index** in the process, not a per-index allowance. It defaults to 256 MiB and can be modified via the `SURREAL_HNSW_CACHE_SIZE` [environment variable](/docs/reference/cli/db/environment-variables). The value is an integer number of bytes - for example, `268435456` for the 256 MiB default.
+
+This budget covers the cached **vectors** only. As noted above, the HNSW graph itself is held in memory: it is loaded on first use and is not bounded by this setting, so it must be sized for separately. If the full graph will not fit in RAM, DISKANN below is the index designed for that case.
+
+### DISKANN (disk-based approximate nearest neighbours)
+
+[DiskANN](https://arxiv.org/abs/1907.01668)-style indexes provide **on-disk** approximate nearest-neighbour graphs. They are aimed at **very large** embedding sets where keeping the full graph in RAM (as with HNSW) is impractical: vectors and graph structure are persisted in the key-value store and paged through a bounded cache, trading some latency for a much larger working set.
+
+> [!NOTE]
+> DISKANN indexes are **not supported on WASM** targets. Use HNSW or brute-force KNN for browser / embedded WASM builds.
+
+#### Syntax and defaults
+
+The clause mirrors HNSW: `DISKANN DIMENSION …` followed by optional `TYPE`, `DIST`, tuning knobs, and `HASHED_VECTOR`.
+
+```surql
+DEFINE INDEX diskann_pts
+ ON pts FIELDS point DISKANN DIMENSION 4 DIST EUCLIDEAN TYPE F32;
+-- Same index with defaults written out explicitly:
+-- DEFINE INDEX diskann_pts ON pts FIELDS point DISKANN DIMENSION 4 DIST EUCLIDEAN TYPE F32 DEGREE 64 L_BUILD 100 ALPHA 1.2;
+```
+
+| Clause | Default | Notes |
+| --- | --- | --- |
+| `DIST` | `EUCLIDEAN` | Only `EUCLIDEAN`, `COSINE`, `INNER_PRODUCT`, and `COSINE_NORMALIZED` are valid for DISKANN. |
+| `TYPE` | `F32` | Must be one of `F32`, `F16`, `I8`, `U8`. `COSINE_NORMALIZED` further requires `F32` or `F16`. |
+| `DEGREE` | `64` | Target maximum graph degree (`> 0`). |
+| `L_BUILD` | `100` | Construction search-list size (`> 0`). |
+| `ALPHA` | `1.2` | DiskANN pruning parameter. |
+| `HASHED_VECTOR` | off | Same semantics as for HNSW - hash-stabilised vector - document keys. |
+
+Queries use the **same** KNN operator shape as HNSW: `<|K, EF|>` (approximate) or `<|K, DIST|>` when the distance matches the index, letting the optimiser pick the DISKANN graph. The second number in the approximate form bounds the dynamic candidate list during search (analogous to HNSW `EF`).
+
+#### Memory model and cache size
+
+While HNSW's graph is held resident in memory, a DISKANN index is **key-value-backed**. The graph, its adjacency lists, and the full-precision element vectors are persisted in the key-value store (for example, on disk under RocksDB) and remain the source of truth. Only a bounded in-memory cache holds the hot working set, while cold nodes and vectors are streamed from the key-value store on demand. A DISKANN index's resident memory is therefore bounded by the cache size rather than by the size of the dataset, which is what makes it suitable for larger-than-memory workloads.
+
+Vectors are stored and searched at **full precision**, applying no product quantisation or other compression. The only lever on per-vector size is the chosen `TYPE` (`F32`, `F16`, `I8`, or `U8`).
+
+The cache is a single budget **shared across every DISKANN index** in the process. It defaults to 256 MiB and can be capped with the `SURREAL_DISKANN_CACHE_SIZE` [environment variable](/docs/reference/cli/db/environment-variables#cache-config), the DISKANN counterpart of `SURREAL_HNSW_CACHE_SIZE`. The value is an integer number of bytes - for example, `268435456` for the 256 MiB default.
+
+#### Choosing HNSW or DISKANN
+
+| Concern | Prefer HNSW | Prefer DISKANN |
+| --- | --- | --- |
+| Working set size | Fits comfortably in memory with headroom for the HNSW cache | Much larger than RAM; cold data should stay on disk |
+| Latency profile | Lowest latency when the graph is hot in cache | Extra I/O; better for throughput to cost on huge corpora |
+| Vector element types | Full set (`F64` … `I16` in docs above) | Compact types (`F32`, `F16`, `I8`, `U8`) |
+| Deployment target | Includes WASM | Server / native binaries only |
+
+### Brute Force method
+
+The Brute Force method is suitable for tasks with smaller datasets or when the highest accuracy is required.
+Brute Force currently supports [Euclidean](/docs/reference/query-language/functions/database-functions/vector#vectordistanceeuclidean), [Cosine](/docs/reference/query-language/functions/database-functions/vector#vectorsimilaritycosine), [Manhattan](/docs/reference/query-language/functions/database-functions/vector#vectordistancemanhattan) and [Minkowski](/docs/reference/query-language/functions/database-functions/vector#vectordistanceminkowski) distance functions.
+
+In the example below, the query searches for points closest to the vector `[2,3,4,5]` and uses [vector functions](/docs/reference/query-language/functions/database-functions/vector) to calculate the distance between two points, indicated by `<|2|>`.
+
+<SurrealistMini orientation="horizontal" query="CREATE pts:1 SET point = [1,2,3,4];
+CREATE pts:2 SET point = [4,5,6,7];
+CREATE pts:3 SET point = [8,9,10,11];
+LET $pt = [2,3,4,5];
+SELECT id, vector::distance::euclidean(point, $pt) AS dist FROM pts WHERE point <|2,EUCLIDEAN|> $pt;
+SELECT id FROM pts WHERE point <|2|> $pt EXPLAIN;" />
+
+## Verifying index use in queries
+
+The [`EXPLAIN` clause](/docs/reference/query-language/clauses/explain) shows the execution plan of a query, including whether it uses an index.
+
+```surql
+DEFINE INDEX userEmailIndex ON user FIELDS email UNIQUE;
+CREATE user:test SET email = 'test@surrealdb.com';
+
+SELECT * FROM user WHERE email = 'test@surrealdb.com' EXPLAIN FULL;
+```
+
+An `IndexScan` operator names the index the query planner used. With `FULL`, each operator also reports `metrics`, including how many rows it produced (`output_rows`).
+
+```surql title="Sample output"
+{
+ attributes: {
+ projections: '*'
+ },
+ children: [
+ {
+ attributes: {
+ access: "= 'test@surrealdb.com'",
+ direction: 'Forward',
+ index: 'userEmailIndex',
+ predicate: "email = 'test@surrealdb.com'"
+ },
+ context: 'Db',
+ metrics: {
+ elapsed_ns: 2380999,
+ output_batches: 1,
+ output_rows: 1,
+ records_fetched: 0
+ },
+ operator: 'IndexScan'
+ }
+ ],
+ context: 'Db',
+ metrics: {
+ elapsed_ns: 47083,
+ output_batches: 1,
+ output_rows: 1,
+ records_fetched: 0
+ },
+ operator: 'SelectProject',
+ total_rows: 1
+}
+```
+
+## Using the `ANY`/`ALL` operators for string indexes
+
+An index on a string field is used by `=` and by `IN` with an array of values. The containment operators `CONTAINS`, `CONTAINSANY`, `ALLINSIDE` and `ANYINSIDE` return the same records on such a field, but they scan the table, because they only use an index defined on the elements of an array field (such as `tags.*`). `CONTAINS` on a string is a substring match.
+
+```surql
+/**[test]
+
+[[test.results]]
+value = "NONE"
+
+[[test.results]]
+value = "NONE"
+
+[[test.results]]
+value = "[{ id: account:billy, name: 'Billy McConnell' }]"
+
+[[test.results]]
+value = '''"SelectProject [ctx: Db] [projections: *]\n IndexScan [ctx: Db] [index: name_index, access: = 'Billy McConnell', direction: Forward, predicate: name INSIDE ['Billy McConnell']]\n"'''
+
+[[test.results]]
+value = '''"SelectProject [ctx: Db] [projections: *]\n TableScan [ctx: Db] [table: account, direction: Forward, predicate: name CONTAINSANY ['Billy McConnell'], pre_decode_filter: yes]\n"'''
+
+*/
+
+DEFINE FIELD name ON account TYPE string;
+DEFINE INDEX name_index ON account FIELDS name;
+
+CREATE account:billy SET name = "Billy McConnell";
+
+-- IN uses the index
+EXPLAIN SELECT * FROM account WHERE name IN ["Billy McConnell"];
+//- "SelectProject [ctx: Db] [projections: *]\n IndexScan [ctx: Db] [index: name_index, access: = 'Billy McConnell', direction: Forward, predicate: name INSIDE ['Billy McConnell']]\n"
+
+-- CONTAINSANY scans the table
+EXPLAIN SELECT * FROM account WHERE name CONTAINSANY ["Billy McConnell"];
+//- "SelectProject [ctx: Db] [projections: *]\n TableScan [ctx: Db] [table: account, direction: Forward, predicate: name CONTAINSANY ['Billy McConnell'], pre_decode_filter: yes]\n"
+```
+
+> [!NOTE]
+> In SurrealDB 2.4 and later 2.x releases, `CONTAINSANY`, `ALLINSIDE` and `ANYINSIDE` with the values in an array used an index on a string field, and `CONTAINS` did not. From 3.0.0, use `=` or `IN` to query a string index.
+
+## Rebuilding Indexes
+
+Indexes can be rebuilt using the [`REBUILD`](/docs/reference/query-language/statements/rebuild) statement. This can be useful when you want to update the index definition or when you want to rebuild the index to optimise performance.
+
+You may want to rebuild an index over time to ensure that the index is up-to-date with the latest data in the table.
+
+```surql
+/**[test]
+
+[[test.results]]
+error = "The index 'userEmailIndex' does not exist"
+
+*/
+
+REBUILD INDEX userEmailIndex ON user;
+```
+
+## Using `IF NOT EXISTS` clause
+
+The `IF NOT EXISTS` clause can be used to define an index only if it does not already exist. You should use the `IF NOT EXISTS` clause when defining an index in SurrealDB if you want to ensure that the index is only created if it does not already exist. If the index already exists, the `DEFINE INDEX` statement will return an error.
+
+It's particularly useful when you want to safely attempt to define an index without manually checking its existence first.
+
+On the other hand, you should not use the `IF NOT EXISTS` clause when you want to ensure that the index definition is updated regardless of whether it already exists. In such cases, you might prefer using the `OVERWRITE` clause, which allows you to define an index and overwrite an existing one if it already exists, ensuring that the latest version of the index definition is always in use.
+
+```surql
+/**[test]
+
+[[test.results]]
+value = "NONE"
+
+*/
+
+-- Create a INDEX if it does not already exist
+DEFINE INDEX IF NOT EXISTS example ON example FIELDS example;
+```
+
+## Using `OVERWRITE` clause
+
+The `OVERWRITE` clause can be used to define an index and overwrite an existing one if it already exists. You should use the `OVERWRITE` clause when you want to modify an existing index definition. If the index already exists, the `DEFINE INDEX` statement will overwrite the existing definition with the new one.
+
+```surql
+/**[test]
+
+[[test.results]]
+value = "NONE"
+
+*/
+
+-- Create an INDEX and overwrite if it already exists
+DEFINE INDEX OVERWRITE example ON example FIELDS example;
+```
+
+## Using `CONCURRENTLY` clause
+Building indexes can be lengthy and may time out before they're completed. Without `CONCURRENTLY`, `DEFINE INDEX` blocks until the index is fully built (or the build fails). The `CONCURRENTLY` clause can be used when you need the statement to return immediately while indexing continues in the background. This allows other operations to keep running while the index builds, during which you can monitor progress with [INFO FOR INDEX](/docs/reference/query-language/statements/info#index-information).
+
+```surql
+-- Create an INDEX concurrently
+DEFINE INDEX test ON user FIELDS email CONCURRENTLY;
+INFO FOR INDEX test ON user;
+INFO FOR INDEX test ON user;
+```
+
+When building an index concurrently, SurrealDB starts the index creation as a background process. You can monitor the status of this process using the `INFO FOR INDEX` statement. The output includes a building block that provides several key details:
+
+```surql
+-- Check the indexing status
+INFO FOR INDEX test ON user;
+```
+
+```surql title="Possible output"
+-- Query
+
+{
+ building: {
+ initial: 8143,
+ pending: 19,
+ status: 'indexing',
+ updated: 80
+ }
+}
+```
+The indexing process consists of two stages: **initial** and **update**.
+
+1. **Initial Stage:**
+
+ During this stage, SurrealDB indexes all existing records. The number of indexed records is represented by the `initial` property. While this stage is in progress, any new inserts, updates, or deletions are tracked as `pending`.
+
+2. **Update Stage:**
+
+ Once the initial stage is completed, SurrealDB begins indexing the pending records accumulated during the initial phase. At this point:
+
+ - The `initial` count remains stable.
+ - The `pending` count should gradually decrease as these records are processed; however, it may temporarily increase if new modifications occur during indexing.
+ - The `updated` property indicates the number of pending records that have been indexed during this stage.
+
+When both stages are complete, the index status changes to **ready**, meaning that the index is now automatically updated within the same transaction that inserts, updates, or deletes records.
+
+```surql
+-- Query
+
+{
+ building: {
+ status: 'ready'
+ }
+}
+```
+
+## The `DEFER` clause
+
+> [!WARNING]
+> `DEFER` is available in SurrealDB 2.5 through 2.x only. On 3.x the clause is rejected at parse time, and this section applies to 2.x deployments. On 3.x, use [`CONCURRENTLY`](/docs/reference/query-language/statements/define/indexes#using-concurrently-clause) to build an index in the background - note that it addresses initial builds, not the ongoing write-path queueing `DEFER` provided.
+
+Index updates in SurrealDB occur synchronously during document operations. This ensures **immediate consistency**, in which all reads return the most recent write. However, this can become a bottleneck during high-volume parallel ingestion, leading to write-write conflicts and increased latency, particularly with Full-Text or Vector indexes.
+
+The `DEFER` clause can be used in this case if **eventual consistency** is acceptable, namely a setting in which reads may return stale data for a short period, but will eventually converge to the most recent write. An index with this clause will be enqueued in a persistent background queue so that ingestion and indexing are decoupled.
+
+```surql
+DEFINE ANALYZER simple TOKENIZERS blank,class FILTERS lowercase;
+DEFINE INDEX title_index ON blog FIELDS title FULLTEXT ANALYZER simple BM25(1.2,0.75) HIGHLIGHTS DEFER;
+```
+
+Note: As unique indexes offer a guarantee that no records that contravene the index will ever exist, the `UNIQUE` clause cannot be used together with `DEFER`.
+
+## Performance Implications
+
+When defining indexes, consider which fields are queried most frequently, and index those to optimise performance.
+
+Indexes may improve the performance of SurrealQL statements. This may not be noticeable with small tables but it can be significant for large tables; especially when the indexed fields are used in the `WHERE` clause of a [`SELECT`](/docs/reference/query-language/statements/insert) statement.
+
+Indexes can also impact the performance of write operations ([INSERT](/docs/reference/query-language/statements/insert), [UPDATE](/docs/reference/query-language/statements/update), [DELETE](/docs/reference/query-language/statements/delete)) since the index needs to be updated accordingly. Therefore, the need for read performance has to be balanced against write performance.

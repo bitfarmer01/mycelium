@@ -1,0 +1,178 @@
+{
+  "questions": [
+    {
+      "id": "d01",
+      "text": "how do I run SurrealDB with Docker",
+      "answer": "Start the server with docker run --rm --pull always -p 8000:8000 surrealdb/surrealdb:latest start. In Docker SurrealDB listens on port 8000 by default, and you add -v to mount a directory and use an on-disk storage engine when you want the data to persist across restarts.",
+      "split": "train"
+    },
+    {
+      "id": "d02",
+      "text": "what does the RELATE statement do in SurrealQL",
+      "answer": "The RELATE statement can be used to generate graph edges between two records in the database, so related records can be traversed efficiently. Edges it creates behave like records in their own table and have two required fields that give the direction of the relationship.",
+      "split": "heldout"
+    },
+    {
+      "id": "d03",
+      "text": "how do I listen for real-time changes in SurrealDB",
+      "answer": "Use LIVE SELECT to initiate a real-time selection from a table, optionally applying filters with a WHERE clause. The statement returns a UUID that identifies the live query, and subsequent changes to the data are immediately transmitted to the client.",
+      "split": "train"
+    },
+    {
+      "id": "d04",
+      "text": "how do I define an HNSW vector index in SurrealDB",
+      "answer": "Define it with DEFINE INDEX, naming the table and field and adding HNSW with a DIMENSION, as in DEFINE INDEX mt_pts ON pts FIELDS point HNSW DIMENSION 4 DIST EUCLIDEAN EFC 150 M 12. HNSW is a graph-based method kept in memory, and its M and EFC parameters tune connectivity, with defaults of 12 and 150.",
+      "split": "heldout"
+    },
+    {
+      "id": "d05",
+      "text": "how do graph relations compare with record links in SurrealDB",
+      "answer": "Graph relations are kept in a separate table as opposed to a field inside a record, and they allow you to store data alongside the relationship. Graph relations offer built-in bidirectional querying and referential integrity, advantages that record links also gain when they are defined inside a DEFINE FIELD statement using the REFERENCES clause.",
+      "split": "train"
+    },
+    {
+      "id": "d06",
+      "text": "what user levels can a system user be created on in SurrealDB",
+      "answer": "DEFINE USER creates system users at the ROOT, NAMESPACE or DATABASE level, chosen with the ON clause. Only the OWNER built-in role grants permission to create users, and root owners can create users at any level, while namespace owners can create namespace and database users.",
+      "split": "heldout"
+    },
+    {
+      "id": "d07",
+      "text": "how do I define a record access method in SurrealDB",
+      "answer": "Use DEFINE ACCESS ON DATABASE TYPE RECORD with SIGNUP and SIGNIN expressions, as in DEFINE ACCESS account ON DATABASE TYPE RECORD SIGNUP ( CREATE user SET email = $email, pass = crypto::argon2::generate($pass) ) SIGNIN ( SELECT * FROM user WHERE email = $email ). A record access method allows SurrealDB to operate as a web database by offering custom signin and signup logic as well as custom table and field permissions.",
+      "split": "train"
+    },
+    {
+      "id": "d08",
+      "text": "how does DEFINE SCOPE relate to DEFINE ACCESS in SurrealDB",
+      "answer": "DEFINE SCOPE was deprecated in favour of DEFINE ACCESS TYPE RECORD in SurrealDB versions 2.x, and has been removed as of SurrealDB 3.0. Setting scope access allowed SurrealDB to operate as a web database by defining authentication and access rules, and the DEFINE ACCESS record method is its replacement.",
+      "split": "heldout"
+    },
+    {
+      "id": "d09",
+      "text": "how do table permissions work in SurrealDB",
+      "answer": "Table PERMISSIONS control what record users and guests may do with records in that table, with independent rules for select, create, update and delete. If you omit the clause SurrealDB stores PERMISSIONS NONE, which denies those operations until you grant access explicitly, while PERMISSIONS FULL allows all four.",
+      "split": "train"
+    },
+    {
+      "id": "d10",
+      "text": "how do table permissions and field permissions default differently",
+      "answer": "On a table, omitting PERMISSIONS results in a PERMISSIONS NONE, so record users cannot select, create, update or delete records in that table until you grant access. A field without an explicit clause is stored as PERMISSIONS FULL, because the table is the main access gate while field permissions only narrow further.",
+      "split": "heldout"
+    },
+    {
+      "id": "d11",
+      "text": "how do I control which index a SurrealDB query uses",
+      "answer": "Use the WITH clause on a SELECT statement: WITH INDEX restricts the query planner to using only the specified indexes, while WITH NOINDEX forces the query planner to use the table iterator and is the default. A WHERE clause over an indexed field, such as a full-text index, is what lets the planner use an index in the first place.",
+      "split": "train"
+    },
+    {
+      "id": "d12",
+      "text": "what is the difference between START and LIMIT in SurrealQL",
+      "answer": "LIMIT is used to limit the number of records returned by a query, while START sets the index at which to start returning results, with 0 as the starting point. The two clauses are most often paired to perform pagination, and START reads the records it skips and then discards them, so a page far into a large result costs more than the first page.",
+      "split": "heldout"
+    },
+    {
+      "id": "p01",
+      "text": "how do I report a security vulnerability in SurrealDB",
+      "answer": "Report any issues or vulnerabilities via Github Security Advisories instead of posting a public issue, or send security communications to security@surrealdb.com. Include the version identifier obtained by running surreal version on the command line and details on how the vulnerability can be exploited.",
+      "split": "heldout"
+    },
+    {
+      "id": "p02",
+      "text": "how quickly does SurrealDB respond to a reported vulnerability",
+      "answer": "SurrealDB acknowledges your report within 3 business days of the date of communication. It then verifies the issue, keeps you informed of the progress toward its resolution, and handles your report and any data you share with strict confidentiality.",
+      "split": "train"
+    },
+    {
+      "id": "p03",
+      "text": "how do I report a code of conduct violation and what penalties exist",
+      "answer": "Instances of abusive, harassing, or otherwise unacceptable behaviour may be reported by contacting the project team at info@surrealdb.com. Code of Conduct violations and associated penalties typically fall into one of three categories: warning, suspension, or removal and ban.",
+      "split": "heldout"
+    },
+    {
+      "id": "p04",
+      "text": "what licence does SurrealDB use and what does it allow",
+      "answer": "SurrealDB is released under the Business Source License 1.1, with SurrealDB Ltd. as the licensor and SurrealDB 3.0 as the licensed work. The licence permits production use unless the licensed work is offered as a Database Service, and on the change date of 2030-01-01 it converts to the Apache License, Version 2.0.",
+      "split": "train"
+    },
+    {
+      "id": "t01",
+      "text": "what is the latest SurrealDB release and when was it published",
+      "answer": "The latest release is v3.2.5, published 2026-10-06. It is a stable release with binaries for darwin-amd64, darwin-arm64, darwin-universal, linux-amd64, linux-arm64 and windows-amd64.",
+      "split": "train"
+    },
+    {
+      "id": "t02",
+      "text": "when was SurrealDB 3.3.0 published",
+      "answer": "SurrealDB 3.3.0 was published on 2026-09-28, the same day as 2.7.0 and the 3.3.0-beta.4 pre-release.",
+      "split": "heldout"
+    },
+    {
+      "id": "t03",
+      "text": "which SurrealDB releases were published in September 2026",
+      "answer": "The releases published in September 2026 are 3.3.0, 2.7.0 and 3.3.0-beta.4 on 2026-09-28, and 3.1.6 on 2026-09-01.",
+      "split": "train"
+    },
+    {
+      "id": "t04",
+      "text": "what is the newest SurrealDB 3.3 beta release",
+      "answer": "The newest 3.3 beta release is v3.3.0-beta.4, published 2026-09-28. It is a pre-release with binaries for darwin-amd64, darwin-arm64, darwin-universal, linux-amd64, linux-arm64 and windows-amd64.",
+      "split": "train"
+    },
+    {
+      "id": "t05",
+      "text": "how many SurrealDB releases were published on 2026-08-17",
+      "answer": "Five releases were published on 2026-08-17: 3.3.0-beta.1, 3.2.4, 3.2.3, 3.2.2 and 3.2.1.",
+      "split": "heldout"
+    },
+    {
+      "id": "s01",
+      "text": "what is the purpose of the SurrealQL function string::slug according to the spreadsheet",
+      "answer": "The Functions sheet lists string::slug in the string namespace as converting a string into a human and URL-friendly string.",
+      "split": "train"
+    },
+    {
+      "id": "s02",
+      "text": "what example does the spreadsheet give for the record data type",
+      "answer": "The Data types sheet lists the record data type with the example person:tobie, described as a record ID whose table names can be added inside angle brackets.",
+      "split": "train"
+    },
+    {
+      "id": "s03",
+      "text": "what examples does the spreadsheet give for the bool and string data types",
+      "answer": "The Data types sheet gives true as the example for the bool type and SurrealDB as the example for the string type.",
+      "split": "train"
+    },
+    {
+      "id": "x01",
+      "text": "how does version 1 of the PHP SDK represent SurrealQL data types",
+      "answer": "The PHP SDK translates all SurrealQL datatypes into native PHP types, or a custom implementation. For example a RecordId is represented as a RecordId class holding a tb and id field, and a Decimal is represented in a Decimal class as a string.",
+      "split": "train"
+    },
+    {
+      "id": "x02",
+      "text": "how does version 2 of the PHP SDK represent data types differently",
+      "answer": "Version 2 of the SDK represents the types PHP does not have, such as record IDs, nanosecond datetimes, durations and arbitrary-precision decimals, with value classes in the SurrealDB\\SDK\\Types namespace while native PHP types pass through unchanged. Its type mapping sends none to None, bytes to Bytes, uuid to Uuid and record to RecordId.",
+      "split": "train"
+    },
+    {
+      "id": "n01",
+      "text": "what is our Kubernetes rollout policy",
+      "answer": "The sources do not cover this question.",
+      "split": "train"
+    },
+    {
+      "id": "n02",
+      "text": "which SAP modules does the finance team use",
+      "answer": "The sources do not cover this question.",
+      "split": "train"
+    },
+    {
+      "id": "n03",
+      "text": "how do I file a parental leave request",
+      "answer": "The sources do not cover this question.",
+      "split": "train"
+    }
+  ]
+}

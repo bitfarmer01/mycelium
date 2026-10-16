@@ -1,0 +1,12 @@
+{
+  "d02": ["graph edges", "two required fields", "relate"],
+  "d04": ["hnsw", "dimension", "efc"],
+  "d06": ["system users", "root", "namespace"],
+  "d08": ["define scope", "define access", "record"],
+  "d10": ["permissions none", "permissions full", "record users"],
+  "d12": ["limit", "start", "pagination"],
+  "p01": ["security advisories", "security@surrealdb.com", "surreal version"],
+  "p03": ["info@surrealdb.com", "warning", "suspension"],
+  "t02": ["3.3.0", "2026-09-28", "2.7.0"],
+  "t05": ["2026-08-17", "3.2.4", "3.3.0-beta.1"]
+}

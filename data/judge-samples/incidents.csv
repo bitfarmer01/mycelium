@@ -1,0 +1,7 @@
+id,date,severity,owner,summary
+NOTE,2026-01-01,info,data team,Northwind Robotics (sample data) fictional incident log for testing Mycelium
+INC-2041,2026-07-14,1,Priya Nair,Fleet dashboard went down for 40 minutes after a bad deploy
+INC-2038,2026-07-11,2,Marcus Hale,Robot telemetry lagged for the Berlin site
+INC-2033,2026-07-02,3,Dana Whitfield,Stale docs build warning in the release pipeline
+INC-2029,2026-06-28,2,Priya Nair,Login retries spiked after a clock drift on one host
+INC-2022,2026-06-19,3,Samir Patel,Slack alerts arrived late for a test tenant

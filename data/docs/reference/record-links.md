@@ -1,0 +1,202 @@
+# Record links
+
+source_link: https://surrealdb.com/docs/reference/query-language/language-primitives/record-links
+
+# Record links
+
+SurrealDB can traverse from record to record without the need for traditional SQL JOINs. Each record ID points directly to a specific record in the database, without needing to run a table scan query. Record IDs can be stored within other records, allowing them to be linked together.
+
+## Creating a record
+When you create a record without specifying the id, then a randomly generated id is created and used for the record id.
+
+```surql
+/**[test]
+
+[[test.results]]
+value = "[{ id: person:lva0fwhgqxuk0m88ktn1, name: 'Tobie' }]"
+skip-record-id-key = true
+
+*/
+
+CREATE person SET name = 'Tobie';
+```
+
+```surql title="Output"
+person:aio58g22n3upq16hsani
+```
+
+It's also possible to specify a specific record id when creating or updating records.
+
+```surql
+/**[test]
+
+[[test.results]]
+value = "[{ id: person:tester, name: 'Tobie' }]"
+
+*/
+
+CREATE person:tester SET name = 'Tobie';
+```
+
+```surql title="Output"
+person:tester
+```
+
+## Select directly off of record IDs
+
+Because Record IDs are their own datatype in SurrealQL, you are able to select directly off of them.
+
+```surql
+/**[test]
+
+[[test.results]]
+value = "[{ email: 'tobie@surrealdb.com', id: person:tobie, name: 'Tobie', opts: { enabled: true } }]"
+
+[[test.results]]
+value = "{ email: 'tobie@surrealdb.com', id: person:tobie, name: 'Tobie', opts: { enabled: true } }"
+
+[[test.results]]
+value = "{ email: 'tobie@surrealdb.com', name: 'Tobie' }"
+
+*/
+
+CREATE person:tobie SET name = 'Tobie', email = 'tobie@surrealdb.com', opts.enabled = true;
+
+-- Select the whole record
+person:tobie.*;
+
+-- Select specific fields
+person:tobie.{ name, email };
+```
+
+## Storing record links within records
+
+Records ids can be stored directly within other records, either as top-level properties, or nested within objects or arrays.
+
+```surql
+/**[test]
+
+[[test.results]]
+value = "[{ friends: [person:tobie, person:simon], id: person:jaime, name: 'Jaime' }]"
+
+[[test.results]]
+value = "[{ friends: [person:simon, person:marcus], id: person:tobie, name: 'Tobie' }]"
+
+[[test.results]]
+value = "[{ friends: [person:jaime, person:tobie], id: person:simon, name: 'Simon' }]"
+
+[[test.results]]
+value = "[{ friends: [person:tobie], id: person:marcus, name: 'Marcus' }]"
+
+*/
+
+CREATE person:jaime SET name = 'Jaime', friends = [person:tobie, person:simon];
+CREATE person:tobie SET name = 'Tobie', friends = [person:simon, person:marcus];
+CREATE person:simon SET name = 'Simon', friends = [person:jaime, person:tobie];
+CREATE person:marcus SET name = 'Marcus', friends = [person:tobie];
+```
+
+### Links stay within one database
+
+A record ID holds a table and a key, but no namespace or database, so a link always points to a record in the database the query runs in. There is no syntax for a link to another database. A link that looks like one, such as `other_db_pet:1`, names a table called `other_db_pet` in the current database, and reads as `NONE` if that table has no such record:
+
+```surql
+CREATE owner:1 SET pet = other_db_pet:1;
+SELECT pet.* FROM owner:1;
+```
+
+```surql title="Output"
+[
+ {
+ pet: NONE
+ }
+]
+```
+
+Keep records that link to each other in the same database. Data that must stay in separate databases can store a plain value, such as the key, and look up the record after switching database with [`USE`](/docs/reference/query-language/statements/use).
+
+Parameters are not tied to a database, so a value read in one database can be used after `USE` switches to another, or to another namespace. This applies to a parameter set with `LET` in the same query, and to a parameter set on the connection with the RPC [`let`](/docs/reference/rest-api/rpc-protocol#let) method, which lasts for the whole connection:
+
+```surql
+USE NS app DB main;
+LET $pet_key = (SELECT VALUE pet_key FROM ONLY owner:1);
+
+USE DB pets;
+SELECT * FROM type::record('pet', $pet_key);
+```
+
+## Filtering by a field of a linked record
+
+A query that would use a `JOIN` in SQL, such as finding the articles that have a certain tag, filters on a path through the link instead. The path reads the linked records while the `WHERE` clause runs, so no join or subquery is needed:
+
+```surql
+CREATE tag:rust SET name = 'rust';
+CREATE tag:db SET name = 'databases';
+CREATE article:one SET title = 'Ownership', tags = [tag:rust];
+CREATE article:two SET title = 'Indexes', tags = [tag:db];
+CREATE article:three SET title = 'SurrealDB in Rust', tags = [tag:rust, tag:db];
+
+SELECT title, tags.name AS tags FROM article WHERE 'rust' IN tags.name;
+```
+
+```surql title="Output"
+[
+ { tags: ['rust'], title: 'Ownership' },
+ { tags: ['rust', 'databases'], title: 'SurrealDB in Rust' }
+]
+```
+
+`tags` holds an array of links, so `tags.name` is an array of names, such as `['rust', 'databases']`. A comparison with `=` tests the whole array against one string, which is never true, so `WHERE tags.name = 'rust'` returns no articles. An an operator that looks inside the array can be used:
+
+```surql
+-- Articles with the tag named 'rust'
+SELECT VALUE title FROM article WHERE 'rust' IN tags.name;
+//- ['Ownership', 'SurrealDB in Rust']
+
+-- The same when the tag's record ID is known, without reading the tags
+SELECT VALUE title FROM article WHERE tags CONTAINS tag:rust;
+//- ['Ownership', 'SurrealDB in Rust']
+
+-- Articles that have both tags
+SELECT VALUE title FROM article WHERE tags.name CONTAINSALL ['rust', 'databases'];
+//- ['SurrealDB in Rust']
+```
+
+For a link that holds a single record rather than an array, such as `author = person:tobie`, `=` works as expected: `WHERE author.name = 'Tobie'`. For relationships stored as graph edges instead of record links, see [Joining and querying related tables](/docs/build/migrating/from-other-databases/from-postgresql#joining-and-querying-related-tables).
+
+## Fetching remote records from within records
+
+Nested field traversal can be used to fetch the properties from the remote records, as if the record was embedded within the record being queried.
+
+```surql
+SELECT friends.name FROM person:tobie;
+[
+ {
+ friends: {
+ name: ["Simon", "Marcus"]
+ }
+ }
+]
+```
+
+There is no limit to the number of remote traversals that can be performed in a query. Using `.` dot notation, SurrealDB does not differentiate between nested object properties, or remote records, and will fetch remote records asynchronously when needed for a query.
+
+```surql
+SELECT friends.friends.friends.name FROM person:tobie;
+[
+ {
+ friends: {
+ friends: {
+ friends: {
+ name: [
+ [ ["Tobie", "Simon"], ["Simon", "Marcus"] ],
+ [ ["Simon", "Marcus"] ]
+ ]
+ }
+ }
+ }
+ }
+]
+```
+
+To return a whole linked record in place of its ID, add `.*` to the field, as in `SELECT name, billing_address.*, shipping_address.* FROM user`.

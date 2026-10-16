@@ -1,0 +1,87 @@
+%PDF-1.4
+1 0 obj
+<< /Type /Catalog /Pages 2 0 R >>
+endobj
+2 0 obj
+<< /Type /Pages /Kids [5 0 R 7 0 R 9 0 R] /Count 3 >>
+endobj
+3 0 obj
+<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>
+endobj
+4 0 obj
+<< /Length 583 >>
+stream
+BT /F1 11 Tf 15 TL 72 720 Td
+(Northwind Robotics \(sample data\) Employee Handbook) Tj T*
+(Revision 3, effective 2026-04-01.) Tj T*
+(This handbook is fictional sample data for testing Mycelium.) Tj T*
+(Northwind Robotics \(sample data\) is not a real company.) Tj T*
+() Tj T*
+(Section 1: About Northwind Robotics) Tj T*
+(Northwind Robotics builds warehouse robots and the fleet software that runs them.) Tj T*
+(Our core hours are 10:00 to 15:00 in your local time zone.) Tj T*
+(Focus Friday is the last Friday of every month.) Tj T*
+(No meetings are booked on Focus Friday.) Tj T*
+ET
+endstream
+endobj
+5 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 3 0 R >> >> /Contents 4 0 R >>
+endobj
+6 0 obj
+<< /Length 517 >>
+stream
+BT /F1 11 Tf 15 TL 72 720 Td
+(Section 2: Equipment and Remote Work) Tj T*
+(New hires receive a home office budget of 2000 US dollars.) Tj T*
+(You may buy a desk, chair, monitor, or keyboard with that budget.) Tj T*
+(Ask the people team before buying anything over 500 US dollars.) Tj T*
+() Tj T*
+(Section 3: Security reminders) Tj T*
+(Virtual private network sessions idle out after 8 hours.) Tj T*
+(Security audit logs are kept for 400 days.) Tj T*
+(This 400 day retention rule is the current company rule.) Tj T*
+ET
+endstream
+endobj
+7 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 3 0 R >> >> /Contents 6 0 R >>
+endobj
+8 0 obj
+<< /Length 516 >>
+stream
+BT /F1 11 Tf 15 TL 72 720 Td
+(Section 4: Time Off) Tj T*
+(Full time employees receive 16 weeks of parental leave.) Tj T*
+(You get 25 days of paid leave each year, plus public holidays.) Tj T*
+() Tj T*
+(Section 5: Travel) Tj T*
+(Book travel at least 10 days in advance when you can.) Tj T*
+(Keep every receipt and file your expense report within 30 days.) Tj T*
+() Tj T*
+(Section 6: Support) Tj T*
+(Questions go to the people team at people@northwind.example.) Tj T*
+(This is the end of the sample handbook.) Tj T*
+ET
+endstream
+endobj
+9 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 3 0 R >> >> /Contents 8 0 R >>
+endobj
+xref
+0 10
+0000000000 65535 f 
+0000000009 00000 n 
+0000000058 00000 n 
+0000000127 00000 n 
+0000000197 00000 n 
+0000000831 00000 n 
+0000000957 00000 n 
+0000001525 00000 n 
+0000001651 00000 n 
+0000002218 00000 n 
+trailer
+<< /Size 10 /Root 1 0 R >>
+startxref
+2344
+%%EOF

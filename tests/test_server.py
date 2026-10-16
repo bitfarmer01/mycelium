@@ -136,3 +136,55 @@ async def test_root_serves_placeholder_or_index(client):
         r = await c.get("/")
     assert r.status_code == 200
     assert "html" in r.headers["content-type"]
+
+
+async def test_upload_ingests_supported_and_rejects_others(monkeypatch, tmp_path):
+    import httpx
+
+    import app.server as srv
+    import scripts.ingest as ing
+
+    stored = {}
+    monkeypatch.setattr(srv, "UPLOAD_DIR", tmp_path)
+    monkeypatch.setattr(ing, "embed", lambda texts: [[0.0] * 1024 for _ in texts])
+
+    async def fake_store(chunks, sources, replace_paths=None):
+        stored["chunks"], stored["sources"] = chunks, sources
+
+    monkeypatch.setattr(ing, "store", fake_store)
+    files = [
+        ("files", ("Team Handbook.md", b"# Handbook\n\nThe on-call owner is the platform team.", "text/markdown")),
+        ("files", ("plans.csv", b"plan,price\nStart,0\n", "text/csv")),
+        ("files", ("evil.exe", b"MZ", "application/octet-stream")),
+    ]
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=srv.app), base_url="http://test") as c:
+        r = await c.post("/upload", files=files)
+    assert r.status_code == 200
+    body = r.json()
+    assert {f["name"] for f in body["files"]} == {"Team_Handbook.md", "plans.csv"}
+    assert body["chunks"] == 2 and len(stored["sources"]) == 2
+    assert [x["name"] for x in body["rejected"]] == ["evil.exe"]
+    assert (tmp_path / "Team_Handbook.md").exists() and not (tmp_path / "evil.exe").exists()
+
+
+async def test_upload_limits_chunk_cap_and_busy(monkeypatch, tmp_path):
+    import httpx
+
+    import app.server as srv
+    import scripts.ingest as ing
+
+    monkeypatch.setattr(srv, "UPLOAD_DIR", tmp_path)
+    monkeypatch.setattr(srv, "UPLOAD_MAX_CHUNKS", 1)
+    called = []
+    monkeypatch.setattr(ing, "embed", lambda texts: called.append(1) or [[0.0] * 1024 for _ in texts])
+    big = ("files", ("big.txt", (" ".join(["word"] * 900)).encode(), "text/plain"))
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=srv.app), base_url="http://test") as c:
+        r = await c.post("/upload", files=[big])
+        assert r.status_code == 413 and "exceeds the limit" in r.json()["detail"]
+        assert not called and not (tmp_path / "big.txt").exists()  # rejected before embedding, file removed
+        await srv._upload_lock.acquire()
+        try:
+            r = await c.post("/upload", files=[("files", ("a.md", b"# A\n\nhi", "text/markdown"))])
+            assert r.status_code == 429
+        finally:
+            srv._upload_lock.release()

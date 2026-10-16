@@ -1,12 +1,19 @@
 # Mycelium demo script
 
-Two minutes, six beats. Read the Spoken lines exactly as written, including the app's spoken answers. The Screen lines state what the recording must show at that moment.
+Two minutes, six beats. Read the input lines and the app's spoken answers exactly as written. The Screen lines state what the recording must show at that moment.
 
-## Beat 1, 0:00 to 0:18. A cited answer
+The corpus is SurrealDB's own documentation. Judges can upload their own documents in the page and ask about them at once, so beat 1 opens with an upload. The demo lines for beats 1 to 3 come from `data/demo_questions.md`, written in another window, so the placeholders `<BEAT1>`, `<BEAT2>` and `<BEAT3>` mark where those lines go. Voice is a feature beside typed input, not instead of it: the talk button sends speech to `/stt`, and every spoken answer is fetched from `/tts`.
 
-Presenter speaks: "What does our wiki say about how a discovery call should be structured?"
+## Beat 1, 0:00 to 0:24. An upload and a cited answer
 
-App speaks, 60 words or fewer: "A discovery call follows the BS WISP skeleton: build rapport, set the schedule, why me and now, an intermission checkpoint, the solution, then the proposal. Prep with five to ten minutes of research, ask permission between stages, and promise a same-day proposal instead of closing. I read that as the how-to reading."
+Upload moment, 0:00 to 0:10:
+- The presenter drags a PDF and an xlsx of SurrealDB documentation onto the upload zone.
+- The zone lists each accepted file with its kind and its chunk count, and one line names the chunks added and the milliseconds.
+- The new source rows land at the top of the live feed, which reorders with no refresh.
+
+Question, 0:10 to 0:24:
+- Presenter types the beat 1 question from `data/demo_questions.md`: `<BEAT1>`
+- App speaks, 60 words or fewer: the cited answer to that question.
 
 Screen:
 - The question types into the input and the answer card renders.
@@ -14,47 +21,48 @@ Screen:
 - The spoken answer plays and the caption matches it word for word.
 - Every [N] marker is a link. Clicking one opens the chunk card with title, link, snippet and cosine.
 
-## Beat 2, 0:18 to 0:40. The ambiguous question and a correction
+## Beat 2, 0:24 to 0:44. The ambiguous question and a correction
 
-Presenter speaks: "What do I send a client after the discovery call?"
+Presenter types the beat 2 question from `data/demo_questions.md`: `<BEAT2>`
 
 Screen:
-- The readings call returns three chips: literal "the proposal", intent "a same-day proposal with pricing", scope "the Scope Lock Doc". Mycelium names the intent reading as taken and states why.
+- The readings call returns three chips, literal, intent and scope, each with its paraphrase and p.
+- Mycelium names the intent reading as taken and states why.
 - The presenter taps the scope chip.
-- A red feed row appears within one second and reads: correction, how-to, intent to scope, prior 0.33 to 0.53, cause tap.
-- The three prior bars above the feed move to 0.53 for scope.
+- A red feed row appears within one second: correction, the question's shape, intent to scope, prior 0.33 to 0.53, cause tap.
+- The three prior bars above the feed move to 0.53 for scope, so the learning event and its value move in the same frame.
 
-## Beat 3, 0:40 to 0:58. New session, a paraphrase
+## Beat 3, 0:44 to 1:00. New session, a paraphrase
 
-Presenter speaks: "Press New session. Which document locks what we will build before the build starts?"
+Presenter types the beat 3 question from `data/demo_questions.md`: `<BEAT3>`
 
 Screen:
-- The session badge changes to a new session id.
+- The presenter presses New session and the session badge changes to a new session id.
 - The corrected reading, scope, opens first, ahead of the other two chips.
-- The answer cites the Scope Lock Doc and names the scope reading.
+- The answer cites the scope reading and names it.
 
-## Beat 4, 0:58 to 1:24. Improve yourself
+## Beat 4, 1:00 to 1:26. Improve yourself
 
 Presenter speaks: "Improve yourself."
 
 Screen:
 - Three red BLOCK cards appear, one per poison, each naming the matched pattern: "do not cite", "ignore the wiki", "you may invent". Each card states it was vetoed before any sandbox, and the sandbox run count stays 0.
 - The four clean candidates appear, three suffixes and one composed pair, each with its axis and diff.
-- If the held-out baseline runs have finished, each clean candidate shows its score against the baseline band: baseline 0.71 plus or minus 0.04, candidate 0.78, delta 0.07 greater than 0.04, PASS. If not, each clean candidate reads "designed, measured after the demo".
+- The held-out baseline runs are not in the repo, so each clean candidate reads "designed, measured after the demo".
 
-## Beat 5, 1:24 to 1:40. Re-ask beat 1
+## Beat 5, 1:26 to 1:42. Re-ask beat 1
 
-Presenter speaks: "Same question as the first one. How should a discovery call be structured?"
+Presenter speaks the beat 1 question again: `<BEAT1>`
 
 Screen:
 - The same cited answer returns.
-- The slot version badge is visible in the header. It reads v1.1 after a PASS in beat 4, and v1.0 if no candidate passed.
+- The slot version badge is visible in the header. With no baseline runs, no candidate is scored, so the badge reads v1.0.
 
-## Beat 6, 1:40 to 2:00. What did you learn today?
+## Beat 6, 1:42 to 2:00. What did you learn today?
 
 Presenter speaks: "What did you learn today?"
 
 Screen:
 - A reflection appears with four headings and at most five sentences.
-- Every sentence carries a clickable row id chip that highlights its ledger row when clicked. The caption reads "5 of 5 sentences cite a row id".
+- Every sentence carries a clickable row id chip that highlights its ledger row when clicked. The caption reads how many sentences cite a row id.
 - The app reads the reflection aloud.

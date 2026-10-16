@@ -1,0 +1,1122 @@
+# SELECT
+
+source_link: https://surrealdb.com/docs/reference/query-language/statements/select
+
+# `SELECT` statement
+
+The `SELECT` statement can be used for selecting and querying data in a database. Each SELECT statement supports selecting from multiple targets, which can include tables, records, edges, subqueries, parameters, arrays, objects, and other values.
+
+The [Learn more](#learn-more) section has a video on selecting across document-style relationships.
+
+## Statement syntax
+
+ 
+**SurrealQL Syntax**
+
+```syntax title="SurrealQL Syntax"
+SELECT
+ VALUE @field | @fields [ AS @alias ] [ OMIT @fields ... ]
+ FROM [ ONLY ] @targets
+ [ WITH [ NOINDEX | INDEX @indexes ... ]]
+ [ WHERE @conditions ]
+ [ SPLIT [ ON ] @field, ... ]
+ [
+ GROUP [ ALL | [ BY ] @field, ... ] |
+ ORDER [ BY ] RAND() | @field [ COLLATE ] [ NUMERIC ] [ ASC | DESC ], ...
+ ]
+ [ LIMIT [ BY ] @limit ]
+ [ START [ AT ] @start 0 ]
+ [ FETCH @fields ... ]
+ [ TIMEOUT @duration ]
+ [ FOR UPDATE ]
+ [ TEMPFILES ]
+ [ EXPLAIN [ FULL ] ]
+;
+```
+
+ 
+**Railroad Diagram**
+
+## Example usage
+### Basic usage
+
+By default, SurrealDB returns an array of JSON-like objects called records instead of a tabular structure of rows and columns.
+
+```surql
+/**[test]
+
+[[test.results]]
+value = "[{ address: '1 Bagshot Row', email: 'tobie@surrealdb.com', id: person:tobie, name: { first: 'Tobie' } }]"
+
+[[test.results]]
+value = "[{ address: '1 Bagshot Row', email: 'tobie@surrealdb.com', id: person:tobie, name: { first: 'Tobie' } }]"
+
+[[test.results]]
+value = "[{ address: '1 Bagshot Row', email: 'tobie@surrealdb.com', name: { first: 'Tobie' } }]"
+
+[[test.results]]
+value = "[{ address: '1 Bagshot Row', email: 'tobie@surrealdb.com', id: person:tobie, name: { first: 'Tobie' } }]"
+
+[[test.results]]
+value = "[{ address: '1 Bagshot Row', email: 'tobie@surrealdb.com', name: { first: 'Tobie' } }]"
+
+[[test.results]]
+value = "{ address: '1 Bagshot Row', email: 'tobie@surrealdb.com', id: person:tobie, name: { first: 'Tobie' } }"
+
+*/
+
+CREATE person:tobie SET
+ name.first = "Tobie",
+ address = "1 Bagshot Row",
+ email = "tobie@surrealdb.com";
+
+-- Select all fields from a table
+SELECT * FROM person;
+
+-- Select specific fields from a table
+SELECT name, address, email FROM person;
+
+-- Select all fields from a specific record
+SELECT * FROM person:tobie;
+
+-- Select specific fields from a specific record
+SELECT name, address, email FROM person:tobie;
+
+-- Select just a single record
+-- Using the ONLY keyword, just an object
+-- for the record in question will be returned.
+-- This, instead of an array with a single object.
+SELECT * FROM ONLY person:tobie;
+```
+
+An alias can be used to rename fields or change the structure of an object.
+
+```surql
+SELECT * FROM person;
+
+-- Field `address` now shows up as "string::uppercase"
+-- name.first structure now flattened into a simple field
+SELECT
+ name.first AS user_name,
+ string::uppercase(address)
+FROM person;
+
+-- "Morgan Hitchcock" added to `name` field structure,
+-- `angry_address` for field name instead of automatically
+-- generated "string::uppercase(address) + '!!!'"
+SELECT
+ name.first,
+ "Morgan Hitchcock" AS name.last,
+ string::uppercase(address) + "!!!" AS angry_address
+FROM person;
+```
+
+```surql title="Output"
+-------- Query --------
+
+[
+ {
+ address: '1 Bagshot Row',
+ email: 'tobie@surrealdb.com',
+ id: person:tobie,
+ name: {
+ first: 'Tobie'
+ }
+ }
+]
+
+-------- Query --------
+
+[
+ {
+ "string::uppercase": '1 BAGSHOT ROW',
+ user_name: 'Tobie'
+ }
+]
+
+-------- Query --------
+
+[
+ {
+ angry_address: '1 BAGSHOT ROW!!!',
+ name: {
+ first: 'Tobie',
+ last: 'Morgan Hitchcock'
+ }
+ }
+]
+```
+
+SurrealDB can also return specific fields as an array of values instead of the default array of objects. This only works if you select a single un-nested field from a table or a record.
+
+```surql
+-- Select the values of a single field from a table
+SELECT VALUE name FROM person;
+
+-- Select the values of a single field from a specific record
+SELECT VALUE name FROM person:00e1nc508h9f7v63x72O;
+```
+
+### Advanced expressions
+
+SELECT queries support advanced expressions in the field projections.
+
+```surql
+-- Select nested objects/values
+SELECT address.city FROM person;
+
+-- Select all nested array values
+-- note the .* syntax works to select everything from an array or object-like values
+SELECT address.*.coordinates AS coordinates FROM person;
+-- Equivalent to
+SELECT address.coordinates AS coordinates FROM person;
+
+-- Select one item from an array
+SELECT address.coordinates[0] AS latitude FROM person;
+
+-- Select unique values from an array
+SELECT array::distinct(tags) FROM article;
+
+-- Select unique values from a nested array across an entire table
+SELECT array::group(tags) AS tags FROM article GROUP ALL;
+
+-- Use mathematical calculations in a select expression
+SELECT
+ (( celsius * 1.8 ) + 32) AS fahrenheit
+ FROM temperature;
+
+-- Return boolean expressions with an alias
+SELECT rating >= 4 as positive FROM review;
+
+-- Select manually generated object structure
+SELECT
+ { weekly: false, monthly: true } AS `marketing settings`
+FROM user;
+
+-- Select filtered nested array values
+SELECT address[WHERE active = true] FROM person;
+
+-- Select a person who has reacted to a post using a celebration
+-- Path can be conceptualized as:
+-- person->(reacted_to WHERE type='celebrate')->post
+SELECT * FROM person WHERE ->(reacted_to WHERE type='celebrate')->post;
+
+-- Select a remote field from connected out graph edges
+SELECT ->likes->friend.name AS friends FROM person:tobie;
+
+-- Use the result of a subquery as a returned field
+SELECT *, (SELECT * FROM events
+ WHERE type = 'activity' LIMIT 5) AS history FROM user;
+
+-- Restructure objects in a select expression after `.` operator
+SELECT address.{city, country} FROM person;
+```
+
+### Fields that share an output name
+
+Each field in the projection is written to the output under its alias, or under its own path when it has no alias. When two fields write to the same name, the later one replaces the earlier one, so the order of the fields can change the result.
+
+```surql
+CREATE p:1 SET a = 1, b = 2;
+SELECT a AS x, b AS x FROM p:1;
+```
+
+```surql title="Output"
+[{ x: 2 }]
+```
+
+This also applies to graph paths. `<-write.*` and `<-write<-user.*` both write to `<-write`, so in the query below the second field overwrites the users that the first one nested there.
+
+```surql
+CREATE user:tobie SET name = 'tobie';
+CREATE article:surreal SET title = 'good';
+RELATE user:tobie->write->article:surreal;
+
+-- The users from the first field are lost
+SELECT *, <-write<-user.*, <-write.* FROM article:surreal;
+```
+
+Give each field its own alias to keep the values apart:
+
+```surql
+SELECT *, <-write.* AS writes, <-write<-user.* AS authors FROM article:surreal;
+```
+
+```surql title="Output"
+[
+ {
+ authors: [{ id: user:tobie, name: 'tobie' }],
+ id: article:surreal,
+ title: 'good',
+ writes: [{ id: write:lpcwdmte8moxkgr1944t, in: user:tobie, out: article:surreal }]
+ }
+]
+```
+
+The same happens when a field path runs through a field that `*` has already written. Below, `*` writes the `places` array, and `places.city` then writes its whole result, an array of every city, into a `city` field on each element of that array:
+
+```surql
+CREATE place:west SET city = 'frankfurt';
+CREATE place:wall SET city = 'berlin';
+CREATE town:one SET places = [place:west, place:wall];
+
+SELECT *, places.city FROM town:one;
+```
+
+```surql title="Output"
+[
+ {
+ id: town:one,
+ places: [
+ { city: ['frankfurt', 'berlin'] },
+ { city: ['frankfurt', 'berlin'] }
+ ]
+ }
+]
+```
+
+An alias puts the cities in a field of their own, and [destructuring](/docs/reference/query-language/language-primitives/idioms#destructuring) keeps each city with its own place:
+
+```surql
+SELECT *, places.city AS cities FROM town:one;
+//- [{ cities: ['frankfurt', 'berlin'], id: town:one, places: [place:west, place:wall] }]
+
+SELECT id, places.{ id, city } AS places FROM town:one;
+//- [{ id: town:one, places: [{ city: 'frankfurt', id: place:west }, { city: 'berlin', id: place:wall }] }]
+```
+
+## Filter queries using the `WHERE` clause
+
+As with traditional SQL queries, a SurrealDB SELECT query supports conditional filtering using a `WHERE` clause. If the expression in the `WHERE` clause [is truthy](/docs/reference/query-language/language-primitives/data-types/values#values-and-truthiness) (is present and not an empty value), then the respective record will be returned.
+
+```surql
+-- Simple conditional filtering
+SELECT * FROM article WHERE published = true;
+
+-- Conditional filtering based on graph edges
+SELECT * FROM profile WHERE count(->experience->organisation) > 3;
+
+-- Conditional filtering based on graph edge properties
+SELECT * FROM person WHERE ->(reaction WHERE type='celebrate')->post;
+
+-- Conditional filtering with boolean logic
+SELECT * FROM user WHERE (admin AND active) OR owner = true;
+
+-- Select filtered nested array values
+SELECT address[WHERE active = true] FROM person;
+
+-- Select names for 'person' records as long as 'name' is present
+-- and not an empty string ""
+SELECT name FROM person WHERE name;
+```
+
+## Numeric ranges in a `WHERE` clause
+
+A numeric range can replace a pair of comparisons in a `WHERE` clause. The two statements below return the same records, and the range form is shorter.
+
+```surql
+DELETE person;
+CREATE |person:20000| SET age = (rand::float() * 120).round() RETURN NONE;
+
+-- Assign output to a parameter so the SELECT output is not displayed
+LET $_ = SELECT * FROM person WHERE age > 18 AND age < 65;
+LET $_ = SELECT * FROM person WHERE age in 18..=65;
+```
+
+The comparison form is faster. When the field has an index, the pair of comparisons is answered with an index scan, while `IN` with a range reads every record in the table. Without an index, both forms scan the table, but the comparisons can reject a record before it is decoded and the range cannot. Running `EXPLAIN` on each statement shows an `IndexScan` for the first and a `TableScan` for the second.
+
+```surql
+DEFINE INDEX person_age ON person FIELDS age;
+EXPLAIN SELECT * FROM person WHERE age >= 18 AND age <= 65;
+EXPLAIN SELECT * FROM person WHERE age IN 18..=65;
+```
+
+## Using parameters
+
+Parameters can be used like variables to store a value which can then be used in a subsequent query.
+
+More info on the `$parent` parameter in the second example can be seen on [the page for predefined variables](/docs/reference/query-language/language-primitives/parameters).
+
+```surql
+-- Store the subquery result in a variable and query that result.
+LET $avg_price = (
+ SELECT math::mean(price) AS avg_price FROM product GROUP ALL
+).avg_price;
+
+-- Find the name of the product where the price is higher than the avg price
+SELECT name FROM product
+WHERE [price] > $avg_price;
+
+-- Use the parent instance's field in a subquery (predefined variable)
+SELECT *, (SELECT * FROM events
+ WHERE host == $parent.id) AS hosted_events FROM user;
+```
+
+## Skip certain fields using the `OMIT` clause
+
+Sometimes, especially with tables containing numerous fields, it is desirable to select all fields except a few specific ones. The `OMIT` clause can be used in this case.
+
+```surql
+/**[test]
+
+[[test.results]]
+value = "[{ id: person:tobie, name: 'Tobie', opts: { enabled: true, security: 'secure' }, password: '123456' }]"
+
+[[test.results]]
+value = "[{ id: person:jaime, name: 'Jaime', opts: { enabled: false, security: 'secure' }, password: 'asdfgh' }]"
+
+[[test.results]]
+value = "[{ id: person:jaime, name: 'Jaime', opts: { enabled: false, security: 'secure' }, password: 'asdfgh' }, { id: person:tobie, name: 'Tobie', opts: { enabled: true, security: 'secure' }, password: '123456' }]"
+
+[[test.results]]
+value = "[{ id: person:jaime, name: 'Jaime', opts: { enabled: false } }, { id: person:tobie, name: 'Tobie', opts: { enabled: true } }]"
+
+[[test.results]]
+value = "[{ id: person:jaime, name: 'Jaime', opts: { } }, { id: person:tobie, name: 'Tobie', opts: { } }]"
+
+*/
+
+CREATE person:tobie SET
+ name = 'Tobie',
+ password = '123456',
+ opts.security = 'secure',
+ opts.enabled = true;
+CREATE person:jaime SET
+ name = 'Jaime',
+ password = 'asdfgh',
+ opts.security = 'secure',
+ opts.enabled = false;
+
+SELECT * FROM person;
+-- Omit the password field and security field in the options object
+SELECT * OMIT password, opts.security FROM person;
+
+-- Using destructuring syntax
+SELECT * OMIT password, opts.{ security, enabled } FROM person;
+```
+
+## Sort records using the `ORDER BY` clause
+
+To sort records, SurrealDB allows ordering on multiple fields and nested fields. Use the `ORDER BY` clause to specify a comma-separated list of field names that should be used to order the resulting records. The `ASC` and `DESC` keywords can be used to specify whether results should be sorted in an ascending or descending manner. The `COLLATE` keyword can be used to use Unicode collation when ordering text in string values, ensuring that different cases, and different languages are sorted in a consistent manner. Finally, the `NUMERIC` can be used to correctly sort text which contains numeric values.
+
+From SurrealDB 3.3, fields used only for sorting do not need to appear in the `SELECT` list. Sorting runs before projection, so the full record is available when the order keys are evaluated:
+
+```surql
+-- Return only event and subject, ordered by a field that is not selected
+SELECT event, subject FROM audit_log ORDER BY at DESC;
+```
+
+```surql
+-- Order records randomly
+SELECT * FROM user ORDER BY rand();
+
+-- Order records descending by a single field
+SELECT * FROM song ORDER BY rating DESC;
+
+-- Order records by multiple fields independently
+SELECT * FROM song ORDER BY artist ASC, rating DESC;
+
+-- Order text fields with Unicode collation
+SELECT * FROM article ORDER BY title COLLATE ASC;
+
+-- Order text fields with which include numeric values
+SELECT * FROM article ORDER BY title NUMERIC ASC;
+```
+
+For more detail on collation, numeric ordering, and random order, see the [`ORDER` clause](/docs/reference/query-language/clauses/order).
+
+### Ranking records
+
+SurrealQL has no `RANK()` window function. To rank records, count the records that sort ahead of each one in a subquery, using `$parent` to refer to the outer record, and add one. Records with equal scores share a rank, and the rank after a tie is skipped, as in competition ranking (1, 1, 3, 4).
+
+This works because a record's rank is defined by how many records beat it, not by its position in the output. For each record of the outer query, the subquery reads the whole `player` table again and keeps only the records whose score is strictly greater than `$parent.score`, the score of the record being ranked. If two records score higher, the record is third, so the rank is that count plus one. In the example below, Cai's score of 70 is beaten by Ana and Ben, so the subquery returns two records and Cai's rank is 3. Ana and Ben each find no higher score, so both get rank 1, and because the comparison is `>` rather than `>=`, neither counts the other. The `ORDER BY` clause only sorts the final output, so the ranks come out the same in any order.
+
+```surql
+CREATE player:1 SET name = 'Ana', score = 90;
+CREATE player:2 SET name = 'Ben', score = 90;
+CREATE player:3 SET name = 'Cai', score = 70;
+CREATE player:4 SET name = 'Dee', score = 50;
+
+SELECT name, score, (SELECT id FROM player WHERE score > $parent.score).len() + 1 AS rank
+FROM player ORDER BY score DESC;
+```
+
+```surql title="Output"
+[
+ { name: 'Ana', rank: 1, score: 90 },
+ { name: 'Ben', rank: 1, score: 90 },
+ { name: 'Cai', rank: 3, score: 70 },
+ { name: 'Dee', rank: 4, score: 50 }
+]
+```
+
+For dense ranking, where the rank after a tie is the next number (1, 1, 2, 3), count the distinct higher scores instead:
+
+```surql
+SELECT name, score, (SELECT VALUE score FROM player WHERE score > $parent.score).distinct().len() + 1 AS rank
+FROM player ORDER BY score DESC;
+```
+
+```surql title="Output"
+[
+ { name: 'Ana', rank: 1, score: 90 },
+ { name: 'Ben', rank: 1, score: 90 },
+ { name: 'Cai', rank: 2, score: 70 },
+ { name: 'Dee', rank: 3, score: 50 }
+]
+```
+
+The subquery scans the table once for each record in the outer query, so this approach suits tables of modest size.
+
+## The `LIMIT` clause
+
+To limit the number of records returned, use the `LIMIT` clause.
+
+```surql
+-- Select only the top 50 records from the person table
+SELECT * FROM person LIMIT 50;
+```
+
+When using the `LIMIT` clause, it is possible to paginate results by using the `START` clause to start from a specific record from the result set. The `START` count starts from 0.
+
+```surql
+-- Start at record 50 and select the following 50 records
+SELECT * FROM user LIMIT 50 START 50;
+```
+
+The `LIMIT` clause followed by 1 is often used along with the `ONLY` clause to satisfy the requirement that only up to a single record can be returned.
+
+```surql
+-- Record IDs are unique so guaranteed to be no more than 1
+SELECT * FROM ONLY person:jamie;
+
+-- Error because no guarantee that this will return a single record
+SELECT * FROM ONLY person WHERE name = "Jaime";
+
+-- Add `LIMIT 1` to ensure that only up to one record will be returned
+SELECT * FROM ONLY person WHERE name = "Jaime" LIMIT 1;
+```
+
+```surql
+/**[test]
+
+[[test.results]]
+value = "[5, 6, 7, 8, 9]"
+
+*/
+
+-- Select the first 5 records from the array
+SELECT * FROM [1,2,3,4,5,6,7,8,9,10] LIMIT 5 START 4;
+```
+
+```surql title="Output"
+[
+ 5,
+ 6,
+ 7,
+ 8,
+ 9
+]
+```
+
+## The `ONLY` clause
+
+If you are selecting just one single resource, it's possible to use the `ONLY` clause to filter that result from an array.
+
+```surql
+SELECT * FROM ONLY person:john;
+```
+
+If you are selecting from a resource where it is possible that multiple resources are returned, it is required to `LIMIT` the result to just one. This is needed because the query would otherwise not be deterministic.
+
+```surql
+-- Fails
+SELECT * FROM ONLY table_name;
+-- Succeeds
+SELECT * FROM ONLY table_name LIMIT 1;
+```
+
+## More on using the `FROM` clause
+
+The `FROM` clause can be used on targets beyond just a single table or record name.
+
+```surql
+-- Selects all records from both 'user' and 'admin' tables.
+SELECT * FROM user, admin;
+
+-- Selects all records from the table named in the variable '$table',
+-- but only if the 'admin' field of those records is true.
+-- Equivalent to 'SELECT * FROM user WHERE admin = true'.
+LET $table = "user";
+SELECT * FROM type::table($table) WHERE admin = true;
+
+-- Selects a single record from:
+-- * the table named in the variable '$table',
+-- * and the identifier named in the variable '$id'.
+-- This query is equivalent to 'SELECT * FROM user:admin'.
+LET $table = "user";
+LET $id = "admin";
+SELECT * FROM type::record($table, $id);
+
+-- Selects all records for specific users 'tobie' and 'jaime',
+-- as well as all records for the company 'surrealdb'.
+SELECT * FROM user:tobie, user:jaime, company:surrealdb;
+
+-- Selects records from a list of identifiers. The identifiers can be numerical,
+-- string, or specific records such as 'person:lrym5gur8hzws72ux5fa'.
+SELECT * FROM [3648937, "test", person:lrym5gur8hzws72ux5fa, person:4luro9170uwcv1xrfvby];
+
+-- Selects data from an object that includes a 'person' key,
+-- which is associated with a specific person record, and an 'embedded' key set to true.
+SELECT * FROM { person: person:lrym5gur8hzws72ux5fa, embedded: true };
+
+-- This command first performs a subquery, which selects all 'user' records and adds a
+-- computed 'adult' field that is true if the user's 'age' is 18 or older.
+-- The main query then selects all records from this subquery where 'adult' is true.
+SELECT * FROM (SELECT age >= 18 AS adult FROM user) WHERE adult = true;
+```
+
+SurrealQL has no `UNION` or `UNION ALL` keyword. Listing several tables in `FROM` returns the records of all of them and keeps duplicates, which is the result of `UNION ALL`. The results of two separate queries can be joined with [`array::concat()`](/docs/reference/query-language/functions/database-functions/array#arrayconcat) or the `+` operator. To remove duplicates, as `UNION` does, use [`array::union()`](/docs/reference/query-language/functions/database-functions/array#arrayunion):
+
+```surql
+CREATE user:tobie SET name = 'Tobie';
+CREATE admin:jaime SET name = 'Jaime';
+CREATE admin:tobie SET name = 'Tobie';
+
+SELECT VALUE name FROM user, admin;
+//- ['Tobie', 'Jaime', 'Tobie']
+
+array::union((SELECT VALUE name FROM user), (SELECT VALUE name FROM admin));
+//- ['Tobie', 'Jaime']
+```
+
+Every record belongs to a table, so a `SELECT` always names the tables that it reads from. To read the records of every table in the current database, take the table names from [`INFO FOR DB`](/docs/reference/query-language/statements/info) and select from each one. This reads every record in the database, so the time it takes grows with the size of the database.
+
+```surql
+CREATE person:aisha SET name = 'Aisha';
+CREATE product:lamp SET price = 40;
+
+(INFO FOR DB).tables.keys().map(|$table| SELECT * FROM type::table($table)).flatten();
+```
+
+```surql title="Output"
+[
+ { id: person:aisha, name: 'Aisha' },
+ { id: product:lamp, price: 40 }
+]
+```
+
+## Record ranges
+
+SurrealDB supports the ability to query a range of records, using the record ID. Record ID ranges retrieve records using the natural sorting order of the record IDs. These range queries can be used to query a range of records in a timeseries context. You can see more here about [array-based Record IDs](/docs/reference/query-language/language-primitives/data-types/record-ids#array-based-record-ids).
+
+```surql
+-- Select all person records with IDs between the given range
+SELECT * FROM person:1..1000;
+-- Select all records for a particular location, inclusive
+SELECT * FROM temperature:['London', NONE]..=['London', time::now()];
+-- Select all temperature records with IDs less than a maximum value
+SELECT * FROM temperature:..['London', '2022-08-29T08:09:31'];
+-- Select all temperature records with IDs greater than a minimum value
+SELECT * FROM temperature:['London', '2022-08-29T08:03:39']..;
+-- Select all temperature records with IDs between the specified range
+SELECT * FROM temperature:['London', '2022-08-29T08:03:39']..['London', '2022-08-29T08:09:31'];
+```
+
+Using a record range is more performant than the `WHERE` clause, as it does not require a table scan.
+
+```surql
+-- Create 5000 `person` records
+CREATE |person:1..=5000| RETURN NONE;
+
+-- Set the starting time
+LET $now = time::now();
+-- Put the output somewhere so it won't clutter the screen
+LET $_ = SELECT * FROM person:1..=5000;
+-- Get the elapsed time
+LET $time1 = time::now() - $now;
+
+LET $now = time::now();
+LET $_ = SELECT * FROM person WHERE id >= person:1 AND id <= person:5000;
+LET $time2 = time::now() - $now;
+RETURN [$time1, $time2];
+```
+
+## The `GROUP BY` and `GROUP ALL` clause
+
+SurrealDB supports data aggregation and grouping, with support for multiple fields, nested fields, and aggregate functions. In SurrealDB, every field which appears in the field projections of the select statement (and which is not an aggregate function), must also be present in the [`GROUP BY`](/docs/reference/query-language/clauses/group) clause.
+
+```surql
+-- Group records by a single field
+SELECT country FROM user GROUP BY country;
+
+-- Group results by a nested field
+SELECT settings.published FROM article GROUP BY settings.published;
+
+-- Group results by multiple fields
+SELECT gender, country, city FROM person GROUP BY gender, country, city;
+
+-- Use an aggregate function to select unique values from a nested array across an entire table
+SELECT array::group(tags) AS tags FROM article GROUP ALL;
+```
+
+A longer example of grouping using aggregate functions:
+
+```surql
+/**[test]
+
+[[test.results]]
+value = "[{ age: 20, country: 'Japan', gender: 'M', id: person:btiyllegvd4qiy1vspj8 }, { age: 25, country: 'Japan', gender: 'M', id: person:mf73xwobyhqyxc4suxdl }, { age: 23, country: 'US', gender: 'F', id: person:45u27tit21osibawb3zm }, { age: 30, country: 'US', gender: 'F', id: person:t950ztxmelm5nlqzuplz }, { age: 25, country: 'Korea', gender: 'F', id: person:t8toz5e3muclr3hxe74z }, { age: 45, country: 'UK', gender: 'F', id: person:s6mme1k3txzppbg5zx92 }]"
+skip-record-id-key = true
+
+[[test.results]]
+value = "[{ average_age: 25, country: 'Korea', gender: 'F', total: 1 }, { average_age: 45, country: 'UK', gender: 'F', total: 1 }, { average_age: 26.5f, country: 'US', gender: 'F', total: 2 }, { average_age: 22.5f, country: 'Japan', gender: 'M', total: 2 }]"
+
+[[test.results]]
+value = "[{ number_of_records: 6 }]"
+
+*/
+
+INSERT INTO person [
+ { gender: "M", age: 20, country: "Japan" },
+ { gender: "M", age: 25, country: "Japan" },
+ { gender: "F", age: 23, country: "US" },
+ { gender: "F", age: 30, country: "US" },
+ { gender: "F", age: 25, country: "Korea" },
+ { gender: "F", age: 45, country: "UK" },
+];
+
+SELECT
+ count() AS total,
+ math::mean(age) AS average_age,
+ gender,
+ country
+FROM person
+GROUP BY gender, country;
+
+-- Get the total number of records in a table
+SELECT count() AS number_of_records FROM person GROUP ALL;
+```
+
+```surql title="Output"
+-------- Query --------
+
+[
+ {
+ average_age: 25,
+ country: 'Korea',
+ gender: 'F',
+ total: 1
+ },
+ {
+ average_age: 45,
+ country: 'UK',
+ gender: 'F',
+ total: 1
+ },
+ {
+ average_age: 26,
+ country: 'US',
+ gender: 'F',
+ total: 2
+ },
+ {
+ average_age: 22,
+ country: 'Japan',
+ gender: 'M',
+ total: 2
+ }
+]
+
+-------- Query --------
+
+[
+ {
+ number_of_records: 6
+ }
+]
+```
+
+To return the most recently modified record per group instead of aggregate totals, see [Latest record per group](/docs/learn/querying/concepts-and-guides/subqueries-and-advanced-patterns#latest-record-per-group).
+
+To count the values of several fields across a set of search results at once, such as the brands and tags of matching products, see [Counts for search filters (facets)](/docs/learn/querying/concepts-and-guides/subqueries-and-advanced-patterns#counts-for-search-filters-facets).
+
+### `GROUP` and `SPLIT` incompatibility
+
+The `GROUP` and `SPLIT` clauses are incompatible with each other due to opposing behaviour: while `SPLIT` is a post-processing clause that multiplies the output of a query, `GROUP` works in the other way by collapsing the output.
+
+Versions before 3.0.0 allowed these two clauses to be used together, after which attempting to do so results in a parsing error.
+
+```surql
+SELECT * FROM person SPLIT name GROUP BY name;
+```
+
+```surql title="Output"
+'Parse error: SPLIT and GROUP are mutually exclusive
+ --> [6:22]
+ |
+6 | SELECT * FROM person SPLIT name GROUP BY name;
+ | ^^^^^^^^^^ SPLIT cannot be used with GROUP
+ --> [6:33]
+ |
+6 | SELECT * FROM person SPLIT name GROUP BY name;
+ | ^^^^^^^^^^^^^ GROUP cannot be used with SPLIT
+'
+```
+
+Disallowing the two clauses together forces a query that uses both to have one inside a subquery, which makes it clear which operation is to be performed first.
+
+```surql
+CREATE user SET
+ name = "Jack",
+ emails = ["my@firstemail.com", "another@builder.com"],
+ age = 37;
+
+CREATE user SET
+ name = "Ellen",
+ emails = ["ruler@forest.com", "wife@tom.com"],
+ age = 50;
+
+CREATE user SET
+ name = "Phillip",
+ emails = ["prior@kingsbridge.com", "boss@remigius.com"],
+ age = 50;
+
+SELECT age, emails FROM (SELECT * FROM user SPLIT emails) GROUP BY age;
+
+SELECT age, emails
+FROM (
+ SELECT age, array::group(emails) AS emails
+ FROM user
+ GROUP BY age
+)
+SPLIT emails;
+```
+
+### Using a `COUNT` index to speed up `count()` in `GROUP ALL` queries
+
+To speed up the `count()` function along with `GROUP ALL` to get the total number of records in a table, a `COUNT` index can be used. This keeps track of the total number of records as a single value as opposed to a dynamic iteration of the table to get the full count every time a query is run.
+
+```surql
+DEFINE INDEX person_count ON person COUNT;
+SELECT count() AS number_of_records FROM person GROUP ALL;
+```
+
+### `math::stddev()` and `math::variance()` in table views
+
+The `math::stddev()` and `math::variance()` functions can also be used in table views.
+
+```surql
+DEFINE TABLE person SCHEMALESS;
+DEFINE TABLE person_stats AS
+ SELECT
+ count(),
+ age,
+ math::stddev(score) AS score_stddev,
+ math::variance(score) AS score_variance
+ FROM person
+ GROUP BY age;
+
+INSERT INTO person [
+ { id: person:alice, age: 25, score: 80 },
+ { id: person:alices_rival, age: 25, score: 88 },
+ { id: person:bob, age: 24, score: 90 },
+ { id: person:bobs_rival, age: 24, score: 99 },
+ { id: person:charlie, age: 23, score: 70 },
+ { id: person:charlies_rival, age: 23, score: 77 }
+];
+
+SELECT * FROM person_stats WHERE age >= 24;
+```
+
+Output:
+
+```surql
+[
+ {
+ age: 24,
+ count: 2,
+ id: person_stats:[
+ 24
+ ],
+ score_stddev: 6.363961030678927719607599259dec,
+ score_variance: 40.50dec
+ },
+ {
+ age: 25,
+ count: 2,
+ id: person_stats:[
+ 25
+ ],
+ score_stddev: 5.656854249492380195206754897dec,
+ score_variance: 32dec
+ }
+]
+```
+
+## The `SPLIT` clause
+
+As SurrealDB supports arrays and nested fields within arrays, it is possible to use the [`SPLIT`](/docs/reference/query-language/clauses/split) clause to split the result on a specific field name, returning each value in an array as a separate value, along with the record content itself. This is useful in data analysis contexts.
+
+```surql
+/**[test]
+
+[[test.results]]
+value = "[{ emails: ['me@me.com', 'longer_email@other_service.com'], id: user:czs7vds6shgb6m2hbwgj, name: 'Name' }]"
+
+[[test.results]]
+value = "[{ emails: 'me@me.com', id: user:czs7vds6shgb6m2hbwgj, name: 'Name' }, { emails: 'longer_email@other_service.com', id: user:czs7vds6shgb6m2hbwgj, name: 'Name' }]"
+
+*/
+
+CREATE user SET
+ name = "Name",
+ emails = ["me@me.com", "longer_email@other_service.com"];
+
+-- Split the results by each value in an array
+SELECT * FROM user SPLIT emails;
+```
+
+```surql title="Output"
+[
+ {
+ emails: 'me@me.com',
+ id: user:tr5sxe8iygdco05faoh0,
+ name: 'Name'
+ },
+ {
+ emails: 'longer_email@other_service.com',
+ id: user:tr5sxe8iygdco05faoh0,
+ name: 'Name'
+ }
+]
+```
+
+Other examples using the `SPLIT` clause:
+
+```surql
+-- Split the results by each value in a nested array
+SELECT * FROM country SPLIT locations.cities;
+
+-- Filter the result of a subquery
+SELECT * FROM (SELECT * FROM person SPLIT loggedin)
+ WHERE loggedin > '2023-05-01';
+```
+
+## Connect targets using the FETCH clause
+
+SurrealDB can connect records through [record links](/docs/reference/query-language/language-primitives/record-links) and [graph connections](/docs/reference/query-language/statements/relate).
+
+Instead of pulling data from multiple tables and merging that data together, SurrealDB allows you to traverse related records efficiently without needing to use JOINs.
+
+To fetch and replace records with the remote record data, use the [`FETCH`](/docs/reference/query-language/clauses/fetch) clause to specify the fields and nested fields which should be fetched in-place, and returned in the final statement response output.
+
+```surql
+-- Select all the review information
+-- and the artist's email from the artist table
+SELECT *, artist.email FROM review FETCH artist;
+
+-- Select all the article information
+-- only if the author's age (from the author table) is under 30.
+SELECT * FROM article WHERE author.age < 30 FETCH author;
+```
+
+## Selecting inside graph queries
+
+A `SELECT` statement and/or its clauses can be used inside graph queries as well at the graph edge portion of the query.
+
+```surql
+-- Note: 1..4 used to be inclusive until SurrealDB 3.0.0
+-- Now creates 1 up to but not including 4
+CREATE |person:1..4|;
+
+RELATE person:1->likes->person:2 SET like_strength = 20, know_in_person = true;
+RELATE person:1->likes->person:3 SET like_strength = 5, know_in_person = false;
+RELATE person:2->likes->person:1 SET like_strength = 10, know_in_person = true;
+RELATE person:2->likes->person:3 SET like_strength = 12, know_in_person = false;
+RELATE person:3->likes->person:1 SET like_strength = 2, know_in_person = false;
+RELATE person:3->likes->person:2 SET like_strength = 9, know_in_person = false;
+
+SELECT ->likes AS likes FROM person;
+SELECT ->(SELECT like_strength FROM likes) AS likes FROM person;
+SELECT ->(SELECT like_strength FROM likes
+ WHERE like_strength > 10) AS likes FROM person;
+SELECT ->(likes WHERE like_strength > 10) AS likes FROM person;
+SELECT ->(SELECT like_strength, know_in_person
+ FROM likes ORDER BY like_strength DESC) AS likes
+ FROM person;
+SELECT ->(SELECT count() as count, know_in_person
+ FROM likes GROUP BY know_in_person) AS likes
+ FROM person;
+SELECT ->(likes LIMIT 1) AS likes FROM person;
+SELECT ->(likes START 1) AS likes FROM person;
+```
+
+For more examples, see the [graph clauses](/docs/reference/query-language/statements/relate#graph-clauses) section of the page on the `RELATE` statement.
+
+## The `WITH` clause
+
+The query planner can replace the standard table iterator with one or several index iterators based on the structure and requirements of the query. However, there may be situations where manual control over these potential optimizations is desired or required.
+
+For instance, the cardinality of an index can be high, potentially even equal to the number of records in the table. The sum of the records iterated by several indexes may end up being larger than the number of records obtained by iterating over the table. In such cases, if there are different index possibilities, the most probable optimal choice would be to use the index known with the lowest cardinality.
+
+- `WITH INDEX @indexes ...` restricts the query planner to using only the specified index(es)
+- `WITH NOINDEX` forces the query planner to use the table iterator.
+
+```surql
+-- forces the query planner to use the specified index(es):
+SELECT * FROM person
+WITH INDEX ft_email
+WHERE
+ email = 'tobie@surrealdb.com' AND
+ company = 'SurrealDB';
+
+-- forces the usage of the table iterator
+SELECT name FROM person WITH NOINDEX WHERE job = 'engineer'
+ AND gender = 'm';
+```
+
+## The `EXPLAIN` clause
+
+When `EXPLAIN` is added, the `SELECT` statement returns its execution plan instead of its result. The plan is a tree of operators: an `IndexScan` reads the records through an index, and a `TableScan` reads every record in the table. `EXPLAIN FULL` also runs the query and adds `metrics` to each operator, such as the number of rows it produced.
+
+```surql
+DEFINE INDEX fast_email ON TABLE person FIELDS email;
+CREATE person:tobie SET email = "tobie@surrealdb.com";
+
+SELECT * FROM person WHERE email = 'tobie@surrealdb.com' EXPLAIN;
+```
+
+```surql title="Output"
+{
+ attributes: {
+ projections: '*'
+ },
+ children: [
+ {
+ attributes: {
+ access: "= 'tobie@surrealdb.com'",
+ direction: 'Forward',
+ index: 'fast_email',
+ predicate: "email = 'tobie@surrealdb.com'"
+ },
+ context: 'Db',
+ operator: 'IndexScan'
+ }
+ ],
+ context: 'Db',
+ operator: 'SelectProject'
+}
+```
+
+The [`EXPLAIN` clause](/docs/reference/query-language/clauses/explain) page shows the plan with and without an index, and the output of `EXPLAIN FULL`.
+
+## The `TIMEOUT` clause
+
+When processing a large result set with many interconnected records, it is possible to use the `TIMEOUT` keyword to specify a timeout duration for the statement. If the statement continues beyond this duration, then the transaction will fail, and the statement will return an error.
+
+```surql
+-- Cancel this conditional filtering based on graph edge properties
+-- if it's not finished within 5 seconds
+SELECT * FROM person
+ WHERE ->knows->person->(knows
+ WHERE influencer = true) TIMEOUT 5s;
+```
+
+## The `TEMPFILES` clause
+
+When processing a large result set with many records, it is possible to use the `TEMPFILES` clause to specify that the statement should be processed in temporary files rather than memory.
+
+This significantly reduces memory usage in exchange for slower performance.
+
+```surql
+-- Select every person and order them by name using temporary files rather than memory.
+SELECT * FROM person ORDER BY name TEMPFILES;
+```
+
+This requires the temporary directory to be set in the server configuration or when using the [`surreal db start`](/docs/reference/cli/db/commands/start) command.
+
+## The `VERSION` clause
+
+If you are using a storage engine that supports versioning (RocksDB or the beta SurrealKV) with versioning enabled, write operations on a table will track the state of each record at the time at which the operation was performed.
+
+You can then perform time-travel queries that query the state of a table at a specific point in time by using the `VERSION` clause in a `SELECT` query.
+
+This clause can be used on startup by adding `versioned=true` to the [datastore configuration parameters](/docs/reference/cli/db/commands/start#datastore-configuration) when executing the `surreal db start` command.
+
+```bash title="Examples of surreal db start with versioning enabled"
+# Start with a versioned SurrealKV datastore with a root user
+surreal db start --user root --pass secret "surrealkv://my_kv_db?versioned=true"
+
+# Or disable authentication for quick anonymous access
+surreal db start --unauthenticated "surrealkv://my_kv_db?versioned=true"
+
+# Start with a versioned RocksDB datastore with a root user
+surreal db start --user root --pass secret "rocksdb://my_db?versioned=true"
+```
+
+The in-memory SurrealMX backend does not support versioned queries. From 3.3.0 it refuses `versioned=true` and a non-zero `retention` at startup, and a `VERSION` clause sent to it returns an error saying that the underlying datastore does not support versioned queries.
+
+The `VERSION` clause is always followed by a [datetime](/docs/reference/query-language/language-primitives/data-types/datetimes). When the specified timestamp does not exist, an empty array is returned.
+
+```surql
+CREATE user:john SET name = 'John';
+
+-- user:john did not exist two days ago, returns empty array
+SELECT * FROM user:john VERSION time::now() - 2d;
+
+-- Slee for five seconds
+SLEEP 5s;
+
+-- Returns user:john as the record existed three seconds ago
+SELECT * FROM user:john VERSION time::now() - 3s;
+```
+
+The `VERSION` clause can be used via other dynamic expressions such as functions as long as they resolve to a datetime.
+
+```surql
+DEFINE FUNCTION fn::yesterday() -> datetime { time::now() - 1d };
+
+CREATE user:john SET name = 'John';
+
+SELECT * FROM user VERSION fn::yesterday();
+```
+
+## The `FOR UPDATE` clause
+
+Inside a transaction, a plain `SELECT` reads a consistent [snapshot](/docs/learn/querying/concepts-and-guides/transactions#snapshot-isolation), but the transaction can still commit successfully even if the records it read were modified by another transaction in the meantime. When later writes depend on a value that was only read, this allows the transaction to commit decisions based on stale data.
+
+The `FOR UPDATE` clause registers each selected record for commit-time conflict detection: the enclosing transaction will only commit if none of those records were modified by another transaction after the snapshot was taken. If a concurrent modification is detected, `COMMIT` fails with a transaction conflict error, and the transaction can be retried.
+
+```surql
+BEGIN;
+
+-- Read the account purely as a decision input; it is not written below
+LET $account = SELECT * FROM ONLY account:one FOR UPDATE;
+
+IF $account.status = "active" {
+ CREATE order SET account = account:one, item = "widget";
+};
+
+-- Fails with a retryable conflict error if another transaction
+-- modified account:one after this transaction's snapshot
+COMMIT;
+```
+
+The clause takes no lock, and no transaction waits on another. A concurrent transaction can write a registered record and commit normally; the conflict surfaces on the transaction that read the record, whose `COMMIT` then fails. Where `SELECT ... FOR UPDATE` holds a row lock in other databases, here it adds a check, so plan for retries rather than for waiting.
+
+`FOR UPDATE` is only needed for records that are read as decision inputs but never written within the transaction. A record that the transaction also writes is already protected, because the write itself is checked for conflicts at commit time.
+
+The `FOR UPDATE` clause requires record ids as targets, and each selected record is protected individually. It does not lock tables, ranges, or query predicates, so it does not prevent new matching records from being created by concurrent transactions.
+
+A target can be named literally or passed through a parameter, so `SELECT * FROM $record FOR UPDATE` behaves the same as naming the record id inline, as long as the parameter holds a record id rather than a table.
+
+Reading a record id that does not exist registers that id too, so a concurrent transaction that creates it also causes this transaction's commit to fail. This is what makes the clause suitable for guarding a get-or-create path, where the decision rests on a record being absent.
+
+The clause cannot be combined with the `VERSION`, `GROUP`, or `SPLIT` clauses, nor with `LIMIT` across multiple targets, and it cannot be used with targets other than record ids.
+
+Because the conflict registration is only validated at commit time, `FOR UPDATE` needs a transaction that commits. A read nested inside an expression is accommodated by promoting the enclosing statement to a write, so the registration still reaches a committing transaction. A read-only transaction has no commit to validate against, and rejects the clause.
+
+## Learn more
+
+This explainer video covers selecting across document-style relationships, including record links and nested data:

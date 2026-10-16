@@ -1,0 +1,9 @@
+{
+  "releases/releases.csv": "https://github.com/surrealdb/surrealdb/releases",
+  "tables/surrealdb-reference.xlsx": "https://surrealdb.com/docs/reference/query-language/language-primitives/data-types",
+  "pdf/define-analyzer.pdf": "https://surrealdb.com/docs/surrealql/statements/define/analyzer",
+  "pdf/vector-functions.pdf": "https://surrealdb.com/docs/surrealql/functions/database/vector",
+  "html/begin.html": "https://surrealdb.com/docs/surrealql/statements/begin",
+  "html/let.html": "https://surrealdb.com/docs/surrealql/statements/let",
+  "html/kill.html": "https://surrealdb.com/docs/surrealql/statements/kill"
+}

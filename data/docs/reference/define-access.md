@@ -1,0 +1,142 @@
+# DEFINE ACCESS
+
+source_link: https://surrealdb.com/docs/reference/query-language/statements/define/access
+
+# `DEFINE ACCESS` statement
+
+Defining an access method allows SurrealDB to grant access to resources using different kinds of credentials.
+
+## Requirements
+
+- You must be authenticated as a [system user](/docs/learn/security/authentication/users#system-users) at the same level or higher than the level on which access is defined.
+
+## Statement syntax
+
+```syntax title="SurrealQL Syntax"
+DEFINE ACCESS [ OVERWRITE | IF NOT EXISTS ] @name
+ ON [ ROOT | NAMESPACE | DATABASE ]
+ TYPE [
+ JWT [ ALGORITHM @algorithm KEY @key | URL @url ]
+ | RECORD
+ [ SIGNUP @expression ]
+ [ SIGNIN @expression ]
+ [ WITH JWT
+ [ ALGORITHM @algorithm KEY @key | URL @url ]
+ [ WITH ISSUER KEY @key ]
+ ]
+ [ WITH REFRESH ]
+ | BEARER FOR [ USER | RECORD ]
+ [ AUTHENTICATE @expression ]
+ [ CONTEXT @expression ]
+ [ DURATION
+ [ FOR GRANT @duration ]
+ [ FOR TOKEN @duration ]
+ [ FOR SESSION @duration ]
+ ]
+ [ COMMENT @string ]
+```
+
+## JSON Web Token (JWT) access
+
+A JWT access method allows accessing SurrealDB with a token signed by a trusted issuer. The contents of the token will be trusted by SurrealDB as long as it has been signed with a trusted credential.
+
+Learn more about [JWT access method in the documentation](/docs/reference/query-language/statements/define/access/jwt).
+
+## Record access
+
+A record access method allows accessing SurrealDB as a [record user](/docs/learn/security/authentication/users#record-users). Record users allow SurrealDB to operate as a web database by offering mechanisms to define custom signin and signup logic as well as custom table and field permissions.
+
+Learn more about [record access method in the documentation](/docs/reference/query-language/statements/define/access/record).
+
+## Bearer access
+
+A bearer access method allows generating bearer grants with an associated key that can be used to access SurrealDB as a specific [system user](/docs/learn/security/authentication/users#system-users) or [record user](/docs/learn/security/authentication/users#record-users). Bearer grants allow other systems and software to authenticate with SurrealDB using a secure and unique credential that can be audited and revoked at any time.
+
+Learn more about [bearer access method in the documentation](/docs/reference/query-language/statements/define/access/bearer).
+
+## Duration
+
+The duration clause specifies the duration of the token returned after successful authentication with the access method as well as the duration of the session established both using the access method and the aforementioned token. The difference between these concepts is explained in the [expiration documentation](/docs/learn/security/authentication/users#expiration).
+
+```surql
+/**[test]
+
+[[test.results]]
+value = "NONE"
+
+*/
+
+-- Create a RECORD access method for accounts
+-- On successful authentication, a token expiring after 15 minutes will be returned
+-- This token can be used to establish a session that will expire after 6 hours
+-- The token will be automatically used to authenticate the session
+DEFINE ACCESS account ON DATABASE TYPE RECORD
+ SIGNUP ( CREATE user SET email = $email, pass = crypto::argon2::generate($pass) )
+ SIGNIN ( SELECT * FROM user WHERE email = $email
+ AND crypto::argon2::compare(pass, $pass) )
+ DURATION FOR TOKEN 15m, FOR SESSION 12h
+;
+```
+
+## With `AUTHENTICATE` clause
+
+The authenticate clause can be used to change the record identifier returned by the `SIGNIN` and `SIGNUP` clauses or replace the identifier provided in the token when authenticating `WITH JWT`. In the context of [`DEFINE ACCESS ... TYPE RECORD`](/docs/reference/query-language/statements/define/access/record), the `AUTHENTICATE` clause is always executed across signin, signup and token authentication.
+
+When used in a [`DEFINE ACCESS ... TYPE JWT`](/docs/reference/query-language/statements/define/access/jwt), the `AUTHENTICATE` clause is used to validate the token claims and can be used to log or stop authentication attempts.
+
+In both cases, the clause expects nothing to be returned and will otherwise fail with a generic error. The `THROW` statement can be called to return a custom error to the end user.
+
+### Privileges inside the clause
+
+`SIGNIN`, `SIGNUP` and `AUTHENTICATE` clauses are evaluated with a session scoped to the level the access method is defined on, and with the Editor role. An access method defined `ON DATABASE` evaluates its clauses as a Database Editor, one defined `ON NAMESPACE` as a Namespace Editor, and one defined `ON ROOT` as a Root Editor.
+
+The clause therefore reaches only the namespace or database that owns the access method. A statement inside it that targets another namespace fails, whatever role the user who defined the access method holds.
+
+The Editor role is a system role, so table and field `PERMISSIONS` clauses do not apply to lookups made inside these clauses. A `SELECT` against a record table behaves the same whether or not that table restricts record users.
+
+## With `CONTEXT` clause
+
+The `CONTEXT` clause attaches a value to the session at authentication time, and permission expressions read it back as `$session.data`. It is evaluated once, after `AUTHENTICATE`, with `$auth` already bound.
+
+```surql
+DEFINE ACCESS account ON DATABASE TYPE RECORD
+ SIGNIN { RETURN SELECT * FROM user WHERE email = $email }
+ CONTEXT { RETURN { tier: $auth.tier, teams: $auth.teams } }
+ DURATION FOR SESSION 12h;
+```
+
+`CONTEXT` keeps whatever it returns by storing it in `$session.data`, which holds the value in the shape the clause produced it, objects and arrays included.
+
+That is the difference from `AUTHENTICATE`, which yields an identity that is reduced to a record link before being bound to `$auth`. So a projection assembled there arrives as the record id alone, and any extra fields built alongside it are dropped. `CONTEXT` is thus used when you prefer to keep these fields.
+
+The main use for `CONTEXT` is in permissions. A predicate that needs per-account authorisation otherwise queries a table for every record it filters, and that cost scales with the size of the table it queries. Reading the same facts from `$session.data` filters against a value already on the session instead:
+
+```surql
+DEFINE TABLE invoice SCHEMAFULL
+ PERMISSIONS FOR select WHERE team IN $session.data.teams;
+```
+
+`session` is a protected parameter name, so a client cannot shadow `$session.data` with `LET` or with an SDK `set` call. That is what makes the value safe to authorise against.
+
+`CONTEXT` is also available on [`ALTER ACCESS`](/docs/reference/query-language/statements/alter/access), and an access method without the clause behaves exactly as it did before.
+
+> [!NOTE]
+> The value is computed when the session authenticates, so it is a snapshot rather than a live view. A change written after authentication is not reflected until the session authenticates again. Put facts that change within a session's lifetime in the permission predicate itself, and keep `CONTEXT` for the ones that hold for as long as the session does.
+
+## Using `IF NOT EXISTS` clause
+
+The `IF NOT EXISTS` clause can be used to define an access method only if it does not already exist. If the access method already exists, the `DEFINE ACCESS` statement will return an error.
+
+```surql
+-- Create an ACCESS if it does not already exist
+DEFINE ACCESS IF NOT EXISTS example ON NAMESPACE ...;
+```
+
+## Using `OVERWRITE` clause
+
+The `OVERWRITE` clause can be used to define an access method and overwrite an existing one if it already exists. You should use the `OVERWRITE` clause when you want to modify an existing access method definition. If the access method already exists, the `DEFINE ACCESS` statement will overwrite the existing access method definition with the new one.
+
+```surql
+-- Create an ACCESS and overwrite if it already exists
+DEFINE ACCESS OVERWRITE example ON NAMESPACE ...;
+```

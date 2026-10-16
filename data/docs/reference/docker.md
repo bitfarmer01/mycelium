@@ -1,0 +1,229 @@
+# Docker
+
+source_link: https://surrealdb.com/docs/running/docker
+
+# Run with Docker
+
+Docker runs SurrealDB without installing the server on the host machine. This page covers starting it from the official image and choosing a version tag.
+
+## Running the SurrealDB server using Docker
+
+To get started using Docker, you can use the `latest` tag. To view all the available versions and tags, or to use a specific tag visit the [Docker Hub](https://hub.docker.com/r/surrealdb/surrealdb) page. To start a server use the [`start`](/docs/reference/cli/db/commands/start) command. In Docker, SurrealDB listens on port `8000` in all interfaces by default so that the host can connect to the container in the default bridge networking mode.
+
+```bash
+docker run --rm --pull always -p 8000:8000 surrealdb/surrealdb:latest start
+```
+
+> [!IMPORTANT]
+> For local development, use the `latest-dev` image variant (i.e., docker run --rm --pull always -p 8000:8000 surrealdb/surrealdb:latest-dev start). This version includes a shell and package manager, allowing you to install tools and interact with the container's internals.
+
+In order to persist data when the Docker instance is restarted or shut down, specify a Docker folder using the Docker `-v` command line argument, and use the on-disk storage engine in SurrealDB using the path prefix chosen as a Docker folder.
+
+```bash
+mkdir mydata # Create a directory to store the database, owned by the current user
+docker run --rm --pull always -p 8000:8000 --user $(id -u) -v $(pwd)/mydata:/mydata surrealdb/surrealdb:latest start rocksdb:/mydata/mydatabase.db
+```
+
+The default logging level for the database server is `info`. To control the logging verbosity, specify the `--log` argument. The following command starts the database with `debug` level logging, resulting in more logs being output to the terminal. If extra verbosity is not needed, specify a lower level or simply remove the flag, which will default to the `info` level.
+
+```bash
+mkdir mydata # Create a directory to store the database, owned by the current user
+docker run --rm --pull always -p 8000:8000 --user $(id -u) -v $(pwd)/mydata:/mydata surrealdb/surrealdb:latest start --log debug rocksdb:/mydata/mydatabase.db
+```
+
+### Configuring authentication
+
+Authentication is enabled by default on SurrealDB, while the `--unauthenticated` flag can be used to opt out.
+
+To set up access as an authenticated user, configure your initial root-level user by setting the `--user` and `--pass` command-line arguments.
+
+The following command starts the database with a top-level user named `root` with a password set to `secret`. The root user will be persisted in storage, which means you don't have to include these two arguments the next time you start SurrealDB.
+
+```bash
+docker run --rm --pull always -p 80:8000 -v /mydata:/mydata surrealdb/surrealdb:latest start --user root --pass secret rocksdb:/mydata/mydatabase.db
+```
+
+The path after `rocksdb:` is a path inside the container, and has to point into the directory where the volume is mounted, here `/mydata`. A single slash, as in `rocksdb:/mydata/mydatabase.db`, makes it an absolute path, which is what reaches the volume. A relative path such as `rocksdb:mydatabase.db` is resolved from the working directory of the container, which is its root directory `/`. The container user cannot write there, so the server fails to start with `Failed to create RocksDB directory` and `Permission denied`. See [Absolute vs. relative paths](/docs/reference/cli/db/commands/start#absolute-vs-relative-paths) for how the number of slashes after `rocksdb:` decides which kind of path it is.
+
+An absolute path gives the same `Permission denied` error when the container user cannot write to the mounted directory. The image runs as the non-root user `nonroot`, with UID `65532`. On Linux a bind-mounted directory keeps the owner it has on the host, so a directory owned by `root` is not writable from the container. This includes a directory that Docker created because it did not exist. Mount a directory that you own and pass `--user $(id -u)`, as in the examples at the top of this page, or give the directory to the container user with `sudo chown 65532 /mydata`.
+
+In order to change the default port that SurrealDB uses for web connections and from database clients you can use the Docker `-p` command line argument to tunnel the port to the internal SurrealDB port which SurrealDB is served on. The following command starts the database on port `80`.
+
+```bash
+docker run --rm --pull always -p 80:8000 -v /mydata:/mydata surrealdb/surrealdb:latest start --user root --pass secret rocksdb:/mydata/mydatabase.db
+```
+
+After running the above command, you should see the SurrealDB server start up successfully.
+
+```bash
+docker run --rm --pull always -p 80:8000 -v /local-dir:/container-dir surrealdb/surrealdb:latest start --user root --pass secret rocksdb:/container-dir/mydatabase.db
+```
+```text title="Output"
+2025-08-30T15:06:34.788739Z INFO surreal::dbs: ✅🔒 Authentication is enabled 🔒✅
+2025-08-30T15:06:34.788821Z INFO surrealdb::kvs::ds: Starting kvs store in rocksdb:/container-dir/mydatabase.db
+2025-08-30T15:06:34.788859Z INFO surrealdb::kvs::ds: Started kvs store in rocksdb:/container-dir/mydatabase.db
+2025-08-30T15:06:34.789222Z INFO surrealdb::kvs::ds: Initial credentials were provided and no existing root-level users were found: create the initial user 'root'.
+2025-08-30T15:06:35.205123Z INFO surrealdb::node: Started node agent
+2025-08-30T15:06:35.205827Z INFO surrealdb::net: Started web server on 0.0.0.0:8080
+```
+
+The server has no web page of its own. Opening `http://localhost:8000` in a browser redirects to [SurrealDB Studio](/docs/explore/studio) on surrealdb.com, which can then connect to the server. To check that the server is running, request `http://localhost:8000/health` instead, which returns `200` with an empty body. Queries go to the [HTTP and WebSocket endpoints](/docs/reference/rest-api/http-protocol), such as `/sql` and `/rpc`.
+
+For details on the `start` command, and all of the available configuration options and arguments, view the [`start command documentation`](/docs/reference/cli/db/commands/start).
+
+## Run your first query
+
+With the server container running and port `8000` published, connect to it with the [`surreal sql`](/docs/reference/cli/db/commands/sql) command from the same image. This starts a SurrealQL REPL against the server, using the credentials from the authentication step above.
+
+```bash
+docker run --rm --pull always -it surrealdb/surrealdb:latest sql --endpoint http://host.docker.internal:8000 --username root --password secret --namespace main --database main --pretty
+```
+
+> [!NOTE]
+> `host.docker.internal` resolves to the host on Docker Desktop for macOS and Windows. On Linux, add `--add-host=host.docker.internal:host-gateway` to the command, or use `--network host` and connect to `http://localhost:8000`. If you have the `surreal` binary installed on the host, you can connect with `surreal sql --endpoint http://localhost:8000` and the same flags instead.
+
+Create a record. There is no need to define the table first, because SurrealDB creates it on the first write.
+
+```surql
+CREATE person:tobie SET name = "Tobie", city = "London";
+```
+
+```surql title="Output"
+[
+ {
+ city: 'London',
+ id: person:tobie,
+ name: 'Tobie'
+ }
+]
+```
+
+Select it back to confirm the round trip.
+
+```surql
+SELECT name, city FROM person;
+```
+
+```surql title="Output"
+[
+ {
+ city: 'London',
+ name: 'Tobie'
+ }
+]
+```
+
+When you finish, exit the REPL with `Ctrl+C`. If you started the server with a mounted volume and the on-disk storage engine, the record persists across container restarts.
+
+## Running SurrealDB with Docker Compose
+
+The Compose file below starts SurrealDB with a persistent volume, reads the root credentials from a `.env` file, and loads a schema file every time the server starts.
+
+```yaml title="compose.yaml"
+services:
+ surrealdb:
+ image: surrealdb/surrealdb:latest
+ user: root
+ ports:
+ - "8000:8000"
+ env_file:
+ - .env
+ volumes:
+ - surrealdb-data:/data
+ - ./schema.surql:/schema.surql:ro
+ command: start --import-file /schema.surql rocksdb:/data/app.db
+
+volumes:
+ surrealdb-data:
+```
+
+```bash title=".env"
+SURREAL_USER=root
+SURREAL_PASS=secret
+```
+
+Some details about this file:
+
+- **Credentials:** the server reads `SURREAL_USER` and `SURREAL_PASS` from its own environment, so the `.env` file supplies them without a `--user` or `--pass` argument. This avoids `${VARIABLE}` substitution in `command`, which Compose performs with the variables of the shell that runs `docker compose` and the `.env` file next to `compose.yaml`, not with the variables in `env_file`. An empty substitution creates a root user with an empty name.
+- **`user: root`:** the image runs as a non-root user, and a new named volume belongs to `root`, so without this line the server fails with `Failed to create RocksDB directory` and `Permission denied`. To keep the non-root user, use a bind mount to a host directory owned by the user in the container instead.
+- **`--import-file`:** the file is imported on every start, not only the first one. It can also be set with the `SURREAL_IMPORT_FILE` environment variable.
+
+Because the import runs on every start, write the file so that it can run again on a database that already has the schema:
+
+```surql title="schema.surql"
+DEFINE NAMESPACE IF NOT EXISTS app;
+USE NS app;
+DEFINE DATABASE IF NOT EXISTS main;
+USE DB main;
+
+DEFINE TABLE IF NOT EXISTS person SCHEMAFULL;
+DEFINE FIELD IF NOT EXISTS name ON person TYPE string;
+```
+
+> [!WARNING]
+> A statement in the import file that fails, such as a `DEFINE TABLE` without `IF NOT EXISTS` for a table that already exists, is skipped without an error in the log, and the server starts normally. Use `IF NOT EXISTS` so that the file gives the same result on every start, or `OVERWRITE` for a definition that the file must always replace.
+
+## Using the command-line tools within Docker
+The Docker container contains both the server, and the command line tools for importing, exporting, and querying a remote SurrealDB server.
+
+```bash
+docker run --rm --pull always surrealdb/surrealdb:latest help
+```
+
+The result should look similar to the output below, confirming that the SurrealDB command-line tool was installed successfully.
+
+```text title="Output"
+.d8888b. 888 8888888b. 888888b.
+d88P Y88b 888 888 'Y88b 888 '88b
+Y88b. 888 888 888 888 .88P
+ 'Y888b. 888 888 888d888 888d888 .d88b. 8888b. 888 888 888 8888888K.
+ 'Y88b. 888 888 888P' 888P' d8P Y8b '88b 888 888 888 888 'Y88b
+ '888 888 888 888 888 88888888 .d888888 888 888 888 888 888
+Y88b d88P Y88b 888 888 888 Y8b. 888 888 888 888 .d88P 888 d88P
+ 'Y8888P' 'Y88888 888 888 'Y8888 'Y888888 888 8888888P' 8888888P'
+
+SurrealDB command-line interface and server
+
+To get started using SurrealDB, and for guides on connecting to and building applications
+on top of SurrealDB, check out the SurrealDB documentation (https://surrealdb.com/docs).
+
+If you have questions or ideas, join the SurrealDB community (https://discord.gg/surrealdb).
+
+If you find a bug, submit an issue on GitHub (https://github.com/surrealdb/surrealdb/issues).
+
+We would love it if you could star the repository (https://github.com/surrealdb/surrealdb).
+
+----------
+
+USAGE:
+ surreal [SUBCOMMAND]
+
+OPTIONS:
+ -h, --help Print help information
+
+SUBCOMMANDS:
+ start Start the database server
+ import Import a SQL script into an existing database
+ export Export an existing database into a SQL script
+ version Output the command-line tool version information
+ sql Start an SQL REPL in your terminal with pipe support
+ help Print this message or the help of the given subcommand(s)
+```
+
+For details on the different commands available, visit the [CLI tool documentation](/docs/reference/cli/db).
+
+## Running SurrealDB Enterprise
+
+SurrealDB Enterprise is published as a separate image, [`surrealdb/surrealdb-enterprise`](https://hub.docker.com/r/surrealdb/surrealdb-enterprise), whose entrypoint is the Enterprise server binary, so it takes the same commands as the Community image. It needs a [licence key](/docs/manage/enterprise#licence-key) to start. The following command passes the key from the `SURREAL_LICENSE_KEY` variable in the current shell:
+
+```bash
+docker run --rm --pull always -p 8000:8000 -e SURREAL_LICENSE_KEY surrealdb/surrealdb-enterprise:latest start --user root --pass secret
+```
+
+`-e SURREAL_LICENSE_KEY` with no value copies the variable from the shell that runs `docker`, which keeps the key out of the command line. To read the key from a mounted file instead, set `SURREAL_LICENSE_KEY_FILE` to the file's absolute path inside the container. The node validates the key against `api.keygen.sh` when it starts, so the container needs outbound network access.
+
+## Next steps
+
+- Query from your application with an [SDK](/docs/languages/javascript) - each language guide starts with a connect-and-query walkthrough.
+- Try SurrealQL without a server in the [Studio Sandbox](/docs/running/sandbox).
+- Learn the query language, starting with the [`SELECT` statement](/docs/reference/query-language/statements/select).

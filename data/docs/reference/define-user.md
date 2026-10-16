@@ -1,0 +1,198 @@
+# DEFINE USER
+
+source_link: https://surrealdb.com/docs/reference/query-language/statements/define/user
+
+# `DEFINE USER` statement
+
+Use the `DEFINE USER` statement to create system users on SurrealDB.
+
+> [!NOTE]
+> While existing logins still function, the DEFINE LOGIN statement has been replaced with DEFINE USER.
+
+## Requirements
+
+- You must be authenticated with a user that has enough permissions. Only the OWNER built-in role grants permissions to create users.
+- You must be authenticated with a user that has permissions on the level where you are creating the user:
+ - Root users with owner permissions can create Root, Namespace and Database users.
+ - Namespace users with owner permissions can create Namespace and Database users
+ - Database users with owner permissions can create Database users.
+- To select the level where you want to create the user, [you may need to select a namespace and/or database](/docs/reference/query-language/statements/use) before you can use the `DEFINE USER` statement for database or namespace tokens.
+
+> [!NOTE]
+> You cannot use the DEFINE USER statement to create a record user.
+
+## Statement syntax
+
+ 
+**SurrealQL Syntax**
+
+```syntax title="SurrealQL Syntax"
+DEFINE USER [ OVERWRITE | IF NOT EXISTS ] @name
+ ON [ ROOT | NAMESPACE | DATABASE ]
+ [ PASSWORD @pass | PASSHASH @hash ]
+ [ PASSSCRAM @verifier ]
+ [ ROLES @roles ]
+ [ DURATION ( FOR TOKEN @duration [ , ] [ FOR SESSION @duration ] | FOR SESSION @duration [ , ] [ FOR TOKEN @duration ] ) ]
+ [ COMMENT @string ]
+```
+
+ 
+**Railroad Diagram**
+
+## Example usage
+
+The following example shows how you can create a `ROOT` user using the `DEFINE USER` statement.
+
+```surql
+/**[test]
+
+[[test.results]]
+value = "NONE"
+
+*/
+
+-- Create the user with an owner role and some example durations
+DEFINE USER username ON ROOT PASSWORD '123456' ROLES OWNER DURATION
+ FOR SESSION 15m,
+ FOR TOKEN 5s;
+```
+
+Note that even a root-level user can be given a limited role such as `VIEWER`. This can be useful for automated services that need to monitor each namespace and database, or for colleagues in non-technical roles.
+
+```surql
+DEFINE USER birthday_bot
+ ON ROOT PASSWORD "botpassword9!" ROLES VIEWER;
+DEFINE USER clumsy_ceo
+ ON ROOT PASSWORD "password" ROLES VIEWER COMMENT "Don't let the CEO have more than VIEWER access";
+```
+
+The following example shows how you can create a `NAMESPACE` user using the `DEFINE USER` statement.
+
+```surql
+/**[test]
+
+[[test.results]]
+value = "{ database: 'test', namespace: 'abcum' }"
+
+[[test.results]]
+value = "NONE"
+
+*/
+
+-- Specify the namespace
+USE NS abcum;
+-- Create the user with an editor role and some example durations
+DEFINE USER username ON NAMESPACE PASSWORD '123456' ROLES EDITOR DURATION
+ FOR SESSION 12h,
+ FOR TOKEN 1m;
+```
+
+The following example shows how you can create a `DATABASE` user using the `DEFINE USER` statement.
+
+```surql
+/**[test]
+
+[[test.results]]
+value = "{ database: 'app_vitalsense', namespace: 'abcum' }"
+
+[[test.results]]
+value = "NONE"
+
+*/
+
+-- Specify the namespace and database for the user
+USE NS abcum DB app_vitalsense;
+-- Create the user with a viewer role and some example durations
+DEFINE USER username ON DATABASE PASSWORD '123456' ROLES VIEWER DURATION
+ FOR SESSION 5d,
+ FOR TOKEN 2h;
+```
+
+## Using `IF NOT EXISTS` clause
+
+The `IF NOT EXISTS` clause can be used to define a user only if it does not already exist. You should use the `IF NOT EXISTS` clause when defining a user in SurrealDB if you want to ensure that the user is only created if it does not already exist. If the user already exists, the `DEFINE USER` statement will return an error.
+
+It's particularly useful when you want to safely attempt to define a user without manually checking its existence first.
+
+On the other hand, you should not use the `IF NOT EXISTS` clause when you want to ensure that the user definition is updated regardless of whether it already exists. In such cases, you might prefer using the `OVERWRITE` clause, which allows you to define a user and overwrite an existing one if it already exists, ensuring that the latest version of the user definition is always in use.
+
+```surql
+/**[test]
+
+[[test.results]]
+value = "NONE"
+
+*/
+
+-- Create a USER if it does not already exist
+DEFINE USER IF NOT EXISTS example
+ ON ROOT PASSWORD "example" ROLES OWNER;
+```
+
+## Using `OVERWRITE` clause
+
+The `OVERWRITE` clause can be used to define a user and overwrite an existing one if it already exists. You should use the `OVERWRITE` clause when you want to modify an existing user definition. If the user already exists, the `DEFINE USER` statement will overwrite the existing user definition with the new one.
+
+```surql
+/**[test]
+
+[[test.results]]
+value = "NONE"
+
+*/
+
+-- Create an USER and overwrite if it already exists
+DEFINE USER OVERWRITE example ON ROOT PASSWORD "example" ROLES OWNER;
+```
+
+## Roles
+
+Currently, only the built-in roles OWNER, EDITOR and VIEWER are available.
+
+ Role |
+ Description |
+
+ OWNER |
+ Can view and edit any resource on the user's level or below, including user and token (IAM) resources.
+It also grants full permissions for child resources that support the `PERMISSIONS` clause (tables, fields, etc.) |
+
+ EDITOR |
+ Can view and edit any resource on the user's level or below, but not users or token (IAM) resources
+It also grants full permissions for child resources that support the `PERMISSIONS` clause (tables, fields, etc.) |
+
+ VIEWER |
+ Grants permissions to view any resource on the user's level or below, but not edit.
+It also grants view permissions for child resources that support the `PERMISSIONS` clause (tables, fields, etc.) |
+
+## Duration
+
+The duration clause specifies the duration of the token returned after successful authentication with a password or passhash as well as the duration of the session established both using a password or passhash and the aforementioned token. The difference between these concepts is explained in the [expiration](/docs/learn/security/authentication/users#expiration) documentation.
+
+## SCRAM credentials for Postgres clients
+
+When a system user is defined or updated with a plaintext **`PASSWORD`**, SurrealDB automatically derives and stores **SCRAM-SHA-256 verifier material** (PostgreSQL format, PBKDF2-HMAC-SHA-256 with 4096 iterations) alongside the existing Argon2 **`PASSHASH`**. This material is used by the [Postgres wire protocol](/docs/reference/rest-api/postgres-protocol) listener for SASL challenge-response authentication. You do not call any crypto functions - derivation is entirely automatic.
+
+| Clause | Argon2 hash | SCRAM verifier |
+| --- | --- | --- |
+| `PASSWORD '…'` | Derived and stored | Derived and stored |
+| `PASSHASH '…'` | Stored as given | Not stored (no plaintext available) |
+| `PASSSCRAM '…'` | Set by `PASSWORD` or `PASSHASH`, if given | Stored as given, in place of one derived from `PASSWORD` |
+
+`ALTER USER … PASSWORD '…'` regenerates both the Argon2 hash and the SCRAM verifier. `ALTER USER … PASSHASH '…'` updates the hash and **clears** any existing SCRAM verifier, unless the same statement also sets one with `PASSSCRAM`.
+
+Users created before this release, or defined with **`PASSHASH` only**, have no SCRAM material until you set a plaintext password or import a verifier with `PASSSCRAM`. Those users can still authenticate on the Postgres port via **cleartext password** fallback (prefer TLS in production).
+
+### Importing a SCRAM verifier with `PASSSCRAM`
+
+The `PASSSCRAM` clause stores a precomputed SCRAM-SHA-256 verifier, so a user keeps authenticating over SCRAM without the plaintext password being known. It is usually combined with `PASSHASH`, which carries the Argon2 hash in the same way. Both values below were derived from the password `secret`:
+
+```surql
+DEFINE USER reporting ON DATABASE
+ PASSHASH '$argon2id$v=19$m=19456,t=2,p=1$1JHc8xcjlKQj3BFOY9aLCA$9FlIWQO6wPfQrwVElnWRyU9KBzckbB2EnGOLfGUEzHo'
+ PASSSCRAM 'SCRAM-SHA-256$4096:W5weR6PS8IhuFMeyCTr10Q==$eoonh/q2pSTydVV3MZHbqeIlCKGKFOGQSiH7IwjeFpQ=:pYX8KKM1puBfPKyERDxRJ9fYjPxKBXw0Q9elBlpngRQ='
+ ROLES VIEWER;
+```
+
+The verifier uses the format PostgreSQL stores for SCRAM-SHA-256 passwords, `SCRAM-SHA-256$<iterations>:<salt>$<StoredKey>:<ServerKey>`, where the salt and both keys are base64-encoded. The iteration count must be between 4096 and 16,777,216, the salt must not be empty, and each key must decode to 32 bytes. A verifier that does not meet these rules is rejected when the statement is parsed.
+
+This is the clause that makes users round-trip through an [export](/docs/reference/cli/db/commands/export): the export writes each user's stored verifier as `PASSSCRAM` next to `PASSHASH`, so an import restores both. [`INFO`](/docs/reference/query-language/statements/info) statements show it as `PASSSCRAM '[REDACTED]'`, in the same way as the hash.

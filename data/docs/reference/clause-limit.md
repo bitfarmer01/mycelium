@@ -1,0 +1,96 @@
+# LIMIT
+
+source_link: https://surrealdb.com/docs/reference/query-language/clauses/limit
+
+# `LIMIT` clause
+
+The `LIMIT` clause is used to limit the number of records returned by a query. It is particularly useful when you want to retrieve a specific number of records from a table.
+
+## Syntax
+
+```syntax title="Clause Syntax"
+LIMIT @number
+```
+
+## Examples
+
+```surql
+-- Select the first 10 records
+SELECT * FROM person LIMIT 10;
+
+-- Start at record 50 and select the following 10 records
+SELECT * FROM person LIMIT 10 START 50;
+```
+
+```surql
+/**[test]
+
+[[test.results]]
+value = "[5, 6, 7, 8, 9]"
+
+*/
+
+-- Select the first 5 records from the array
+SELECT * FROM [1,2,3,4,5,6,7,8,9,10] LIMIT 5 START 4;
+```
+
+```surql title="Output"
+[
+ 5,
+ 6,
+ 7,
+ 8,
+ 9
+]
+```
+
+The `LIMIT` clause followed by `1` is often used along with the `ONLY` clause to satisfy the requirement that only up to a single record can be returned.
+
+```surql
+-- Record IDs are unique so guaranteed to be no more than 1
+SELECT * FROM ONLY person:jamie;
+
+-- Error because no guarantee that this will return a single record
+SELECT * FROM ONLY person WHERE name = "Jaime";
+
+-- Add `LIMIT 1` to ensure that only up to one record will be returned
+SELECT * FROM ONLY person WHERE name = "Jaime" LIMIT 1;
+```
+
+## Use in pagination
+
+When using the `LIMIT` clause, it is possible to paginate results by using the `START` clause to start from a specific record from the result set. The `START` count starts from 0.
+
+This pattern is most often used through SDKs to avoid sending messages that exceed a certain size to other pieces of software, and so on.
+
+The following pseudocode demonstrates the most common pattern seen when `START` and `LIMIT` are used together.
+
+```rust
+let current = 0;
+loop {
+ let query = db.query(SELECT * FROM person START {current} LIMIT 100);
+ if query.is_empty() {
+ break;
+ } else {
+ query.send_to_app();
+ current += 100;
+ }
+}
+```
+
+`START` reads the records it skips and then discards them, so a page far into a large result costs more than the first page.
+
+### Total count next to a page
+
+A paginated API often returns the total number of matching records together with one page of them. `LIMIT` and `START` do not change what `count()` sees, so count the same `WHERE` condition in a second statement. An object can hold both results in one response:
+
+```surql
+LET $min_age = 18;
+
+{
+ total: (SELECT count() FROM person WHERE age >= $min_age GROUP ALL)[0].count,
+ page: (SELECT name, age FROM person WHERE age >= $min_age ORDER BY name LIMIT 25 START 50)
+};
+```
+
+When no record matches, `total` is `0` and `page` is an empty array. Counting a whole table with no `WHERE` is faster with a [`COUNT` index](/docs/reference/query-language/functions/database-functions/count#using-a-count-index-with-count).

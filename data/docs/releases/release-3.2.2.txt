@@ -1,0 +1,9 @@
+# Release 3.2.2
+
+source_link: https://github.com/surrealdb/surrealdb/releases/tag/v3.2.2
+
+published: 2026-08-17
+
+Release v3.2.2
+
+Assets: LICENSE, surreal-v3.2.2.darwin-amd64.tgz, surreal-v3.2.2.darwin-arm64.tgz, surreal-v3.2.2.darwin-universal.tgz, surreal-v3.2.2.linux-amd64.tgz, surreal-v3.2.2.linux-arm64.tgz, surreal-v3.2.2.windows-amd64.exe

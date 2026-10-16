@@ -1,12 +1,12 @@
 {
-  "v02": ["demo-call", "demo-recap", "consent gate"],
-  "v03": ["checkavailability", "weeklyschedule", "always-open"],
-  "v04": ["transcriptturns", "budgetstate", "knowledgechunks"],
-  "v05": ["budget guard", "global spend", "canstartcall"],
-  "v06": ["vapi", "receptionist", "session replay"],
-  "w02": ["scope lock doc", "handover", "workflow map"],
-  "w05": ["bm25", "reciprocal rank fusion", "dense retrieval"],
-  "w06": ["gap-filling", "lookahead", "multi-step"],
-  "w07": ["archival", "reconstructive memory", "meta-memory"],
-  "w08": ["test-runner", "stopping condition", "god-agent"]
+  "d02": ["graph edges", "two required fields", "relate"],
+  "d04": ["hnsw", "dimension", "efc"],
+  "d06": ["system users", "root", "namespace"],
+  "d08": ["define scope", "define access", "record"],
+  "d10": ["permissions none", "permissions full", "record users"],
+  "d12": ["limit", "start", "pagination"],
+  "p01": ["security advisories", "security@surrealdb.com", "surreal version"],
+  "p03": ["info@surrealdb.com", "warning", "suspension"],
+  "t02": ["3.3.0", "2026-09-28", "2.7.0"],
+  "t05": ["2026-08-17", "3.2.4", "3.3.0-beta.1"]
 }

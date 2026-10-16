@@ -1,0 +1,11 @@
+.env
+.env.*
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+surreal-data/
+infra/surreal-data/
+data/usage.jsonl
+data/corpus.jsonl
+data/baseline.log

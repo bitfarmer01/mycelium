@@ -109,8 +109,8 @@ async def test_reflect_route(monkeypatch, client):
 
 
 async def test_vitals_without_baseline_is_null(monkeypatch, client, tmp_path):
-    import app.routers.vitals as vitals
     import core.db
+    from app.routers import vitals
 
     async def boom(sql, vars=None):
         raise RuntimeError("no db")
@@ -139,11 +139,13 @@ async def test_root_serves_placeholder_or_index(client):
 
 
 async def test_upload_ingests_supported_and_rejects_others(monkeypatch, tmp_path):
+    import asyncio as _asyncio
+
     import httpx
 
-    import app.routers.retrieval as retrieval
     import app.server as srv
     import scripts.ingest as ing
+    from app.routers import retrieval
 
     stored = {}
     monkeypatch.setattr(retrieval, "UPLOAD_DIR", tmp_path)
@@ -158,22 +160,36 @@ async def test_upload_ingests_supported_and_rejects_others(monkeypatch, tmp_path
         ("files", ("plans.csv", b"plan,price\nStart,0\n", "text/csv")),
         ("files", ("evil.exe", b"MZ", "application/octet-stream")),
     ]
+
+    async def wait_done(c, job_id):
+        for _ in range(250):
+            job = (await c.get(f"/upload/status/{job_id}")).json()
+            if job["status"] in ("done", "failed"):
+                return job
+            await _asyncio.sleep(0.02)
+        raise AssertionError("job never finished")
+
     async with httpx.AsyncClient(transport=httpx.ASGITransport(app=srv.app), base_url="http://test") as c:
         r = await c.post("/upload", files=files)
-    assert r.status_code == 200
-    body = r.json()
-    assert {f["name"] for f in body["files"]} == {"Team_Handbook.md", "plans.csv"}
-    assert body["chunks"] == 2 and len(stored["sources"]) == 2
-    assert [x["name"] for x in body["rejected"]] == ["evil.exe"]
-    assert (tmp_path / "Team_Handbook.md").exists() and not (tmp_path / "evil.exe").exists()
+        assert r.status_code == 202  # feature 7: accepted, ingest runs in the background
+        body = r.json()
+        assert {f["name"] for f in body["files"]} == {"Team_Handbook.md", "plans.csv"}
+        assert [x["name"] for x in body["rejected"]] == ["evil.exe"]
+        assert (tmp_path / "Team_Handbook.md").exists() and not (tmp_path / "evil.exe").exists()
+        job = await wait_done(c, body["job_id"])
+    assert job["status"] == "done"
+    result = job["result"]
+    assert result["chunks"] == 2 and len(stored["sources"]) == 2
 
 
 async def test_upload_limits_chunk_cap_and_busy(monkeypatch, tmp_path):
+    import asyncio as _asyncio
+
     import httpx
 
-    import app.routers.retrieval as retrieval
     import app.server as srv
     import scripts.ingest as ing
+    from app.routers import retrieval
 
     monkeypatch.setattr(retrieval, "UPLOAD_DIR", tmp_path)
     monkeypatch.setattr(retrieval, "UPLOAD_MAX_CHUNKS", 1)
@@ -182,8 +198,16 @@ async def test_upload_limits_chunk_cap_and_busy(monkeypatch, tmp_path):
     big = ("files", ("big.txt", (" ".join(["word"] * 900)).encode(), "text/plain"))
     async with httpx.AsyncClient(transport=httpx.ASGITransport(app=srv.app), base_url="http://test") as c:
         r = await c.post("/upload", files=[big])
-        assert r.status_code == 413 and "exceeds the limit" in r.json()["detail"]
-        assert not called and not (tmp_path / "big.txt").exists()  # rejected before embedding, file removed
+        assert r.status_code == 202  # accepted; the cap failure surfaces in the job status
+        assert not called and (tmp_path / "big.txt").exists()  # rejected before embedding
+        job = r.json()
+        for _ in range(250):
+            job = (await c.get(f"/upload/status/{job['job_id']}")).json()
+            if job["status"] in ("done", "failed"):
+                break
+            await _asyncio.sleep(0.02)
+        assert job["status"] == "failed" and "exceeds the limit" in job["error"]
+        assert not (tmp_path / "big.txt").exists()  # capped files are removed
         await retrieval._upload_lock.acquire()
         try:
             r = await c.post("/upload", files=[("files", ("a.md", b"# A\n\nhi", "text/markdown"))])

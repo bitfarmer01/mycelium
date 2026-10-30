@@ -1,6 +1,8 @@
 """SurrealDB-only corpus path: data/docs/**/*.{md,txt,html,pdf,csv,tsv,xlsx} -> chunk + source rows (bge-large-en-v1.5, 1024-d); data/questions.json -> question rows.
 
 Idempotent: chunk ids are sha1(abs path + index), source ids sha1(abs path), question ids from the file.
+Incremental: files whose bytes match the fingerprint stored on their source row are skipped; within a
+changed file, only chunks whose text is new are encoded (content-hash cache, see core.retrieve.EmbeddingCache).
 """
 from __future__ import annotations
 
@@ -9,6 +11,7 @@ import datetime as _dt
 import hashlib
 import html as _html
 import json
+import os
 import re
 import sys
 from pathlib import Path
@@ -18,6 +21,7 @@ sys.path.insert(0, str(ROOT))
 
 from core import db  # noqa: E402
 from core.contracts import CONFIG  # noqa: E402
+from core.retrieve import EmbeddingCache, content_hash  # noqa: E402
 
 DOCS = ROOT / "data" / "docs"
 QUESTIONS = ROOT / "data" / "questions.json"
@@ -33,6 +37,8 @@ ROWS_PER_PARA = 20  # spreadsheet rows per paragraph, so chunks break between ro
 LINKS = DOCS / "sources.json"  # optional {"relative/path.pdf": "https://..."} for files that cannot carry a source_link line
 EMBED_BATCH = 32
 INSERT_BATCH = 200
+# Shared cache for corpus ingests (uploads pass their own once the server hands one over).
+EMBED_CACHE = EmbeddingCache(Path(os.environ.get("MYCELIUM_EMBED_CACHE", str(ROOT / "data" / "embed_cache.npz"))))
 
 
 # ---------- pure helpers (unit-tested) ----------
@@ -106,6 +112,11 @@ def chunk_id(path: str, index: int) -> str:
 
 def source_id(path: str) -> str:
     return hashlib.sha1(path.encode()).hexdigest()[:20]
+
+
+def file_fingerprint(path: Path) -> str:
+    """sha1 of file bytes: the source-level change detector for incremental ingest (mtime lies across checkouts)."""
+    return hashlib.sha1(path.read_bytes()).hexdigest()
 
 
 def rows_text(rows: list[list]) -> str:
@@ -228,6 +239,30 @@ def embed(texts: list[str]) -> list[list[float]]:
     return out
 
 
+def attach_embeddings(chunks: list[dict], cache: EmbeddingCache | None = None) -> int:
+    """Fill each chunk's 'embedding' from the content-hash cache where possible; model-encode only the misses.
+
+    Returns the number of vectors the model encoded (0 means every chunk was a cache hit; with no cache, all of them).
+    """
+    if not chunks:
+        return 0
+    if cache is None:
+        vecs = embed([c["document"] for c in chunks])
+        for c, v in zip(chunks, vecs):
+            c["embedding"] = [float(x) for x in v]
+        return len(vecs)
+    hashes = [content_hash(c["document"]) for c in chunks]
+    hits = cache.get_many(hashes)
+    texts = dict(zip(hashes, (c["document"] for c in chunks)))  # first text per hash
+    missing = [h for h in dict.fromkeys(hashes) if h not in hits]  # unique, order-stable
+    new_vecs = embed([texts[h] for h in missing]) if missing else []
+    cache.put(dict(zip(missing, new_vecs)))
+    vectors = {**hits, **dict(zip(missing, new_vecs))}
+    for c, h in zip(chunks, hashes):
+        c["embedding"] = [float(x) for x in vectors[h]]
+    return len(missing)
+
+
 async def write_chunks(rows: list[dict]) -> None:
     sql = (
         "INSERT INTO chunk $rows ON DUPLICATE KEY UPDATE "
@@ -243,8 +278,11 @@ class TooManyChunks(ValueError):
 
 
 def build_chunks(files: list[Path], links: dict[str, str] | None = None,
-                 max_chunks: int | None = None) -> tuple[list[dict], list[dict]]:
-    """Sync part of ingest (load, chunk, embed): safe to run in a worker thread. Returns (chunk rows with embeddings, source rows)."""
+                 max_chunks: int | None = None, cache: EmbeddingCache | None = None) -> tuple[list[dict], list[dict]]:
+    """Sync part of ingest (load, chunk, embed): safe to run in a worker thread. Returns (chunk rows with embeddings, source rows).
+
+    cache: content-hash embedding cache; None keeps the encode-everything behavior.
+    """
     links = manifest_links() if links is None else links
     chunks: list[dict] = []
     sources: list[dict] = []
@@ -255,7 +293,7 @@ def build_chunks(files: list[Path], links: dict[str, str] | None = None,
             print(f"SKIP {f.name}: {type(e).__name__}")
             continue
         sid = source_id(d["path"])
-        sources.append({"id": sid, "title": d["title"]})
+        sources.append({"id": sid, "title": d["title"], "fingerprint": file_fingerprint(f)})
         i = 0
         for part in d["parts"]:
             title = f"{d['title']} ({part['label']})" if part["label"] else d["title"]
@@ -273,10 +311,7 @@ def build_chunks(files: list[Path], links: dict[str, str] | None = None,
                 i += 1
     if max_chunks is not None and len(chunks) > max_chunks:  # checked before the expensive embed
         raise TooManyChunks(f"{len(chunks)} chunks exceeds the limit of {max_chunks}")
-    if chunks:
-        vecs = embed([c["document"] for c in chunks])
-        for c, v in zip(chunks, vecs):
-            c["embedding"] = v
+    attach_embeddings(chunks, cache)
     return chunks, sources
 
 
@@ -287,16 +322,35 @@ async def store(chunks: list[dict], sources: list[dict], replace_paths: list[str
     if chunks:
         await write_chunks(chunks)
     for s in sources:
+        payload = {k: s[k] for k in ("id", "title")}
+        if s.get("fingerprint"):  # only overwrite when known, so older callers keep the stored value
+            payload["fingerprint"] = s["fingerprint"]
         await db.q(
-            "UPSERT type::record('source', $id) MERGE { title: $title }; "
+            "UPSERT type::record('source', $id) MERGE { title: $title, fingerprint: $fingerprint }; "
             "UPDATE type::record('source', $id) SET alpha = alpha ?? 1, beta = beta ?? 1;",
-            s,
+            payload,
         )
 
 
+def _bare_id(value) -> str:
+    """Bare record key from whatever form the SDK returns ids in ('source:<id>', angle-bracket-wrapped, or bare)."""
+    return re.sub(r"[^0-9A-Za-z_-]", "", str(value).rsplit(":", 1)[-1])
+
+
+async def changed_files(files: list[Path]) -> list[Path]:
+    """Files whose bytes no longer match the fingerprint stored for their source id (new, edited, or never ingested)."""
+    rows = await db.q("SELECT id, fingerprint FROM source;")
+    known = {_bare_id(r["id"]): r.get("fingerprint") for r in rows}
+    return [f for f in files if known.get(source_id(str(f.resolve()))) != file_fingerprint(f)]
+
+
 async def ingest_docs(files: list[Path] | None = None) -> tuple[int, int]:
-    chunks, sources = build_chunks(doc_files() if files is None else files)
+    """Incremental ingest: unchanged files are skipped entirely; changed ones re-embed only chunks whose text is new."""
+    all_files = doc_files() if files is None else files
+    changed = await changed_files(all_files)
+    chunks, sources = build_chunks(changed, cache=EMBED_CACHE)
     await store(chunks, sources)
+    print(f"ingest: {len(changed)}/{len(all_files)} files changed, {len(chunks)} chunks")
     return len(chunks), len(sources)
 
 

@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import asyncio
-import dataclasses
 import hashlib
 import importlib
 import json
@@ -10,78 +9,27 @@ import logging
 import os
 import uuid
 from pathlib import Path
-from urllib.parse import quote
 
+from app.routers import api
+from app.routers.common import STATIC_DIR, _audio_url, _mod, _run
+from core.contracts import ROLES
 from dotenv import load_dotenv
-from fastapi import FastAPI, File, HTTPException, UploadFile, WebSocket, WebSocketDisconnect
-from fastapi.responses import FileResponse, HTMLResponse, Response
+from fastapi import FastAPI, File, HTTPException, UploadFile
+from fastapi.responses import Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
-
-from core.contracts import ROLES
 
 load_dotenv()
 
 log = logging.getLogger("mycelium.server")
 
 ROOT = Path(__file__).resolve().parents[1]
-STATIC_DIR = Path(__file__).resolve().parent / "static"
 BASELINE_PATH = ROOT / "data" / "baseline_runs.json"
 SLOT_PATH = ROOT / "prompts" / "slot.md"
 
 app = FastAPI(title="Mycelium")
 app.mount("/static", StaticFiles(directory=str(STATIC_DIR), check_dir=False), name="static")
-
-PLACEHOLDER = """<!doctype html><html><head><meta charset="utf-8"><title>Mycelium</title></head>
-<body style="font-family:system-ui;padding:2rem"><h1>Mycelium</h1>
-<p>The page is not delivered yet. The API is live: try <a href="/vitals">/vitals</a>.</p></body></html>"""
-
-
-def _mod(name: str):
-    """Import core.<name> or raise 503."""
-    try:
-        return importlib.import_module(f"core.{name}")
-    except Exception as e:  # missing or broken sibling module
-        raise HTTPException(status_code=503, detail=f"core.{name} unavailable: {type(e).__name__}")
-
-
-def _jsonable(v):
-    if dataclasses.is_dataclass(v) and not isinstance(v, type):
-        return dataclasses.asdict(v)
-    if isinstance(v, dict):
-        return {k: _jsonable(x) for k, x in v.items()}
-    if isinstance(v, (list, tuple)):
-        return [_jsonable(x) for x in v]
-    if v is None or isinstance(v, (str, int, float, bool)):
-        return v
-    try:
-        from core.db import plain
-
-        return plain(v)
-    except Exception:
-        return str(v)
-
-
-async def _call(fn, *args):
-    res = fn(*args)
-    if asyncio.iscoroutine(res):
-        res = await res
-    return res
-
-
-async def _run(name: str, attr: str, *args):
-    mod = _mod(name)
-    fn = getattr(mod, attr, None)
-    if fn is None:
-        raise HTTPException(status_code=503, detail=f"core.{name}.{attr} unavailable")
-    return _jsonable(await _call(fn, *args))
-
-
-def _audio_url(spoken) -> str | None:
-    if not spoken or not isinstance(spoken, str):
-        return None
-    return "/tts?text=" + quote(spoken, safe="")
-
+app.include_router(api.router)
 
 UPLOAD_DIR = ROOT / "data" / "docs" / "uploads"
 # Hard limits for judge uploads: a laptop embeds roughly 20-60 chunks/s, so 800 chunks (~280k words) stays near a minute.
@@ -184,14 +132,6 @@ class CorrectIn(BaseModel):
 
 class ConfirmIn(BaseModel):
     question_id: str
-
-
-@app.get("/")
-async def index():
-    page = STATIC_DIR / "index.html"
-    if page.is_file():
-        return FileResponse(str(page), media_type="text/html")
-    return HTMLResponse(PLACEHOLDER)
 
 
 @app.post("/ask")
@@ -310,80 +250,3 @@ async def vitals():
         "counts": counts,
         "runner": "daytona" if os.environ.get("DAYTONA_API_KEY") else "local",
     }
-
-
-@app.get("/config")
-async def config():
-    try:
-        from core import db
-
-        rows = await db.q("SELECT * FROM config:main")
-    except Exception as e:
-        raise HTTPException(status_code=503, detail=f"db unavailable: {type(e).__name__}")
-    if not rows:
-        raise HTTPException(status_code=404, detail="config:main not found")
-    return _jsonable(rows[0])
-
-
-@app.websocket("/events")
-async def events(ws: WebSocket):
-    await ws.accept()
-    send_lock = asyncio.Lock()
-
-    async def send(msg: dict):
-        async with send_lock:
-            await ws.send_text(json.dumps(_jsonable(msg), default=str))
-
-    async def poll_ledger():
-        from core import db
-
-        seen: set[str] = set()
-        first = True
-        while True:
-            try:
-                rows = await db.q("SELECT * FROM ledger ORDER BY ts DESC LIMIT 20")
-                for row in reversed(rows):
-                    key = str(row.get("id")) if isinstance(row, dict) else str(row)
-                    if key in seen:
-                        continue
-                    seen.add(key)
-                    if not first:
-                        await send({"table": "ledger", "action": "CREATE", "row": row})
-                first = False
-            except (WebSocketDisconnect, RuntimeError) as e:
-                if isinstance(e, WebSocketDisconnect):
-                    raise
-                log.warning("ledger poll failed: %s", type(e).__name__)
-            except Exception as e:
-                log.warning("ledger poll failed: %s", type(e).__name__)
-            await asyncio.sleep(2)
-
-    async def relay(table: str):
-        try:
-            from core import db
-
-            async for msg in db.live(table):
-                await send(msg)
-        except WebSocketDisconnect:
-            raise
-        except Exception as e:
-            log.warning("live(%s) failed: %s", table, type(e).__name__)
-            if table == "ledger":
-                await poll_ledger()
-
-    tasks = [asyncio.create_task(relay("ledger")), asyncio.create_task(relay("candidate"))]
-
-    async def watch_disconnect():
-        try:
-            while True:
-                await ws.receive_text()
-        except Exception:
-            return
-
-    watcher = asyncio.create_task(watch_disconnect())
-    try:
-        await watcher
-    finally:
-        for t in tasks:
-            t.cancel()
-        await asyncio.gather(*tasks, return_exceptions=True)

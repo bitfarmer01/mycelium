@@ -2,6 +2,7 @@ import { clone } from "./dom.js";
 import { FX } from "./fixtures.js";
 import { MOCK, MOCK_VITALS } from "./mode.js";
 import { state } from "./session.js";
+import { predictPrior } from "./prior_math.js";
 
 /* ------------------------------------------------------------------------ api layer --
    One place for every request. In mock mode nothing touches the network. */
@@ -55,6 +56,19 @@ async function mockPost(path, body) {
       base.screen = FX.askCited.screen; base.citations = clone(FX.askCited.citations);
     }
     return base;
+  }
+  if (path === "/learning/preview") {
+    await delay(160);
+    var pvBefore = (state.prior && state.prior.slice()) || clone(FX.ask.prior);
+    var pvRoles = ["literal", "intent", "scope"];
+    var pvIdx = pvRoles.indexOf(body && body.to_role);
+    var pvConf = Math.min(1, Math.max(0, body && body.confidence == null ? 1 : body.confidence));
+    var pvRate = 0.3 * pvConf;
+    var pvAfter = pvBefore.slice();
+    if (pvIdx >= 0) pvAfter = predictPrior(pvBefore, pvIdx, pvRate);
+    return { shape: "factual", from_role: "intent", to_role: body && body.to_role, confidence: pvConf,
+             rate: pvRate, prior_before: pvBefore, prior_after: pvAfter,
+             delta: pvIdx >= 0 ? pvAfter[pvIdx] - pvBefore[pvIdx] : 0 };
   }
   if (path === "/correct") {
     await delay(420);

@@ -207,11 +207,41 @@ def correction_rate(confidence: float) -> float:
     return CONFIG["prior_rate_correct"] * c
 
 
+def preview_correction_from(prior: list[float], to_role: str, confidence: float) -> dict:
+    """Pure preview of what a correction would do to a prior — the exact math /correct
+    applies, with no DB writes (feature 35). The console mirrors this in JS and the
+    parity test holds the two to float precision."""
+    idx = _role_idx(to_role)
+    conf = min(1.0, max(0.0, float(confidence)))
+    rate = correction_rate(conf)
+    before = [float(x) for x in prior]
+    after = prior_update(before, idx, rate)
+    return {
+        "to_role": to_role, "confidence": conf, "rate": rate,
+        "prior_before": before, "prior_after": after, "delta": after[idx] - before[idx],
+    }
+
+
 async def record_answer(question_id: str, shape: str, taken_role: str, chunk_ids: list[str]) -> None:
     qref = _ref(question_id)
     for cid in chunk_ids:
         await db.q(f"RELATE {qref}->cites->{_ref(cid)}")
     await _move_prior(shape, taken_role, CONFIG["prior_rate_uncorrected"], f"answered as {taken_role}")
+
+
+async def preview_correction(question_id: str, to_role: str, confidence: float = 1.0) -> dict:
+    """Read-only preview: the prior a correction would produce if submitted now (feature 35).
+
+    Reads the question's shape and the current prior, applies the identical math
+    /correct will apply, and writes nothing — no ledger row, no prior move.
+    """
+    _role_idx(to_role)
+    qrow = _first(await db.q(f"SELECT * FROM {_ref(question_id)}"))
+    shape = str(qrow.get("shape") or "factual")
+    out = preview_correction_from(await get_prior(shape), to_role, confidence)
+    out["shape"] = shape
+    out["from_role"] = str(qrow.get("taken") or "")
+    return out
 
 
 async def correct(question_id: str, to_role: str, confidence: float = 1.0, actor: str = "") -> dict:

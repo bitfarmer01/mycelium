@@ -3,10 +3,34 @@ import { state } from "./session.js";
 import { jget } from "./api.js";
 
 /* --------------------------------------------------------------------- vitals panel -- */
+function fmtMs(ms) {
+  if (ms == null || !isFinite(ms)) return "—";
+  return ms >= 10000 ? (ms / 1000).toFixed(1) + "s" : Math.round(ms) + "ms";
+}
+/* Feature 64: p50/p95 latency and error rate, one cell each; corpus size already
+   renders in the counts grid below. Absent fields show "—" (fail-soft contract). */
+function metricCell(grid, label, txt, cls) {
+  var cell = el("div", "vcell" + (cls ? " " + cls : ""));
+  cell.appendChild(el("div", "k", label));
+  cell.appendChild(el("div", "v", txt));
+  grid.appendChild(cell);
+}
+function renderMetrics() {
+  var m = (state.vitals || {}).metrics;
+  var box = $("#vitalsBody");
+  var grid = el("div", "vgrid");
+  var err = m && m.error_rate;
+  metricCell(grid, "p50", fmtMs(m && m.latency_ms_p50));
+  metricCell(grid, "p95", fmtMs(m && m.latency_ms_p95));
+  metricCell(grid, "errors", err == null ? "—" : (err * 100).toFixed(err > 0.005 ? 1 : 0) + "%", err > 0.05 ? "hot" : "");
+  box.appendChild(grid);
+}
 function renderVitals(animate) {
   var v = state.vitals; if (!v) return;
   var box = $("#vitalsBody"); box.textContent = "";
   $("#vitalsWhen").textContent = "live";
+
+  renderMetrics();
 
   var slotRow = el("div", "vrow");
   var slot = el("span", "pill mono b");
@@ -58,10 +82,21 @@ function renderVitals(animate) {
     box.appendChild(wrap);
   }
 }
+/* Feed-driven update (feature 64): merge a /events vitals row into the panel.
+   Ignored until the first /vitals poll has rendered — the poll carries the
+   same metrics block, so nothing is lost by waiting. */
+function updateMetricsRow(row) {
+  var m = row && row.metrics;
+  if (!m || !state.vitalsLoaded) return;
+  state.vitals.metrics = m;
+  renderVitals(false);
+}
+
 async function loadVitals(animate) {
   try {
     var v = await jget("/vitals");
     state.vitals = v;
+    state.vitalsLoaded = true;
     if (state.prevSlot == null) state.prevSlot = v.slot_version;
     renderVitals(!!animate);
   } catch (e) {
@@ -87,4 +122,4 @@ function bumpCorpus(delta) {
   glow($(".vcell"), "g");
 }
 
-export { renderVitals, loadVitals, loadConfig, scheduleVitals, bumpCorpus };
+export { renderVitals, loadVitals, loadConfig, scheduleVitals, bumpCorpus, updateMetricsRow };

@@ -1,6 +1,6 @@
 import { $, glow } from "./dom.js";
 import { feedAdd } from "./feed.js";
-import { scheduleVitals } from "./vitals.js";
+import { scheduleVitals, updateMetricsRow } from "./vitals.js";
 import { renderPromote, renderGate, upsertCandidate } from "./improve.js";
 import { renderLesson } from "./reflect.js";
 
@@ -17,6 +17,7 @@ function handleEvent(msg) {
     else if (t === "prior") glow($("#priorWrap"), "a");
     scheduleVitals();
   } else if (msg.table === "candidate") { upsertCandidate(row); scheduleVitals(); }
+  else if (msg.table === "vitals") { updateMetricsRow(row); }  /* feature 64: live metrics push */
 }
 
 export { handleEvent };

@@ -9,6 +9,7 @@ import os
 
 from fastapi import APIRouter
 
+from app import metrics
 from app.routers.common import ROOT
 
 router = APIRouter()
@@ -66,4 +67,5 @@ async def vitals():
         "baseline": baseline,
         "counts": counts,
         "runner": "daytona" if os.environ.get("DAYTONA_API_KEY") else "local",
+        "metrics": metrics.snapshot(),
     }

@@ -1,5 +1,6 @@
 import { $ } from "./dom.js";
 import { MOCK } from "./mode.js";
+import { isSilent, SILENT_CHANGE_EVENT } from "./silent.js";
 
 /* --------------------------------------------------------------------------- audio -- */
 var audioStateEl = $("#audioState");
@@ -24,9 +25,12 @@ function stopAudio() {
   try { if (window.speechSynthesis) speechSynthesis.cancel(); } catch (e) {}
   setAudio("audio idle", "");
 }
-/* play audio_url; on ANY error, speak the same text with speechSynthesis */
+/* play audio_url; on ANY error, speak the same text with speechSynthesis.
+   Silent mode (feature 60) returns before any Audio construction or /tts fetch:
+   zero ElevenLabs credit burn — captions (#spoken) still show the text. */
 function speak(text, audioUrl) {
   stopAudio();
+  if (isSilent()) { setAudio("silent — captions only", "b"); return; }
   if (MOCK) { setAudio("playing", "g"); setTimeout(function () { setAudio("audio idle", ""); }, 1200); return; }
   var src = audioUrl || (text ? "/tts?text=" + encodeURIComponent(text) : null);
   if (!src) { setAudio("audio idle", ""); return; }
@@ -43,3 +47,10 @@ function speak(text, audioUrl) {
 }
 
 export { speak, browserSpeak, stopAudio };
+
+/* Toggling silent mid-playback cuts the current audio immediately (feature 60). */
+if (typeof document !== "undefined") {
+  document.addEventListener(SILENT_CHANGE_EVENT, function (ev) {
+    if (ev && ev.detail && ev.detail.on) stopAudio();
+  });
+}

@@ -26,6 +26,8 @@ ROUTE_MANIFEST = [
     ("/confirm", {"POST"}, "confirm", False),
     ("/correct", {"POST"}, "correct", False),
     ("/events", set(), "events", True),
+    ("/exam/burst", {"POST"}, "exam_burst", False),
+    ("/exam/history", {"GET"}, "exam_history", False),
     ("/improve", {"POST"}, "improve", False),
     ("/reflect", {"POST"}, "reflect", False),
     ("/stt", {"POST"}, "stt", False),
@@ -76,7 +78,7 @@ def probed_client(monkeypatch):
     async def ask(text, session_id):
         return {"spoken": "ok", "question_id": "question:x"}
 
-    async def correct(question_id, to_role):
+    async def correct(question_id, to_role, confidence=1.0, actor=""):
         return {"ok": True}
 
     async def confirm(question_id):
@@ -152,6 +154,8 @@ async def test_docs_and_openapi_still_render_every_route(probed_client):
     assert docs.status_code == 200 and "html" in docs.headers["content-type"]
     assert schema.status_code == 200
     paths = schema.json()["paths"]
-    assert set(paths) == set(OPENAPI_METHODS), "openapi gained or lost HTTP routes"
+    # The monolith's route table must never shrink; additive workstream routes
+    # (B /search, D /learning/*, …) extend it on top.
+    assert set(OPENAPI_METHODS) <= set(paths), "openapi lost monolith routes"
     for path, methods in OPENAPI_METHODS.items():
-        assert sorted(paths[path]) == methods, f"{path}: openapi methods {sorted(paths[path])} != {methods}"
+        assert methods <= sorted(paths[path]), f"{path}: openapi methods shrank"

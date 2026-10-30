@@ -16,6 +16,14 @@ TTS_MODEL = QUALITY_MODELS["flash"]
 STT_MODEL = "scribe_v1"
 TIMEOUT = 30.0
 
+# Feature 53: STT upload hardening. Validate shape and format before any API
+# spend or credit burn. Size limit is env-tunable; formats are the audio
+# containers ElevenLabs scribe accepts, keyed by MIME subtype.
+STT_MAX_BYTES = int(os.environ.get("MYCELIUM_STT_MAX_BYTES", str(10 * 1024 * 1024)))
+STT_ALLOWED_SUBTYPES = frozenset(
+    {"webm", "m4a", "mp4", "x-m4a", "ogg", "oga", "wav", "x-wav", "wave", "mpeg", "mp3", "aac", "flac"}
+)
+
 _voice_id: str | None = None
 
 # Feature 59: pronunciation lexicon. Product names TTS mangles get phonetic
@@ -158,3 +166,46 @@ def stt(audio: bytes, mime: str) -> str:
     if r.status_code != 200:
         raise VoiceError(f"stt failed: HTTP {r.status_code}")
     return str(r.json().get("text", "")).strip()
+
+
+class SttUploadError(ValueError):
+    """Feature 53: an upload the /stt route must refuse before any API call.
+    Carries the HTTP status the route should return (413 oversized, 415 format)."""
+
+    def __init__(self, status_code: int, message: str):
+        super().__init__(message)
+        self.status_code = status_code
+
+
+def _audio_subtype(content_type: str | None) -> str:
+    """MIME subtype from a Content-Type header, parameters stripped."""
+    mime = (content_type or "").split(";")[0].strip().lower()
+    return mime.split("/", 1)[1] if "/" in mime else ""
+
+
+def validate_stt_upload(data: bytes, content_type: str | None = None, filename: str | None = None) -> str:
+    """Feature 53: reject bad /stt uploads with clear, early errors.
+
+    Returns the normalized audio MIME to pass to stt(); raises SttUploadError
+    with 413 (too large) or 415 (unsupported format, including empty) otherwise.
+    Clients that send a generic Content-Type get a second chance via the
+    filename extension — browsers recording through MediaRecorder always
+    produce webm, but some HTTP clients claim octet-stream."""
+    if not data:
+        raise SttUploadError(415, "empty upload: no audio data received")
+    subtype = _audio_subtype(content_type)
+    if subtype not in STT_ALLOWED_SUBTYPES:
+        ext = os.path.splitext(filename or "")[1].lstrip(".").lower()
+        if ext not in STT_ALLOWED_SUBTYPES:
+            shown = content_type or "unknown"
+            raise SttUploadError(
+                415,
+                f"unsupported audio format ({shown}): upload webm, m4a, mp3, wav, ogg, aac or flac",
+            )
+        subtype = ext
+    if len(data) > STT_MAX_BYTES:
+        limit_mib = STT_MAX_BYTES // (1024 * 1024)
+        raise SttUploadError(
+            413, f"audio too large: {len(data)} bytes exceeds the {limit_mib} MiB limit"
+        )
+    return f"audio/{subtype}"

@@ -6,7 +6,8 @@ import logging
 import math
 import re
 import threading
-from collections import Counter
+import time
+from collections import Counter, deque
 from pathlib import Path
 
 import numpy as np
@@ -291,6 +292,49 @@ def dedup_chunks(rows: list[dict], embeddings: list[np.ndarray] | None,
     return [rows[i] for i in kept_idx]
 
 
+# ---- retrieval latency histogram (feature 18) ----
+# Bounded recent window, recorded on every retrieve(); summarized at /vitals.
+LATENCY_MAX_SAMPLES = 1000
+
+
+def pctl(values: list[float], q: float) -> float | None:
+    """Linear-interpolation percentile (numpy's 'linear' method) at q in [0,1]; None when empty."""
+    if not values:
+        return None
+    s = sorted(values)
+    if len(s) == 1:
+        return float(s[0])
+    h = (len(s) - 1) * q
+    lo, hi = math.floor(h), math.ceil(h)
+    if lo == hi:
+        return float(s[lo])
+    return float(s[lo] + (s[hi] - s[lo]) * (h - lo))
+
+
+class LatencyHistogram:
+    """Thread-safe bounded window of observed latencies with p50/p95 summaries."""
+
+    def __init__(self, max_samples: int = LATENCY_MAX_SAMPLES):
+        self._lock = threading.Lock()
+        self._samples: deque[float] = deque(maxlen=max_samples)
+
+    def record(self, ms: float) -> None:
+        with self._lock:
+            self._samples.append(float(ms))
+
+    def summary(self) -> dict:
+        with self._lock:
+            samples = list(self._samples)
+        return {
+            "count": len(samples),
+            "p50_ms": round(pctl(samples, 0.5), 2) if samples else None,
+            "p95_ms": round(pctl(samples, 0.95), 2) if samples else None,
+        }
+
+
+latency = LatencyHistogram()  # the vitals store for retrieval timing; read at /vitals
+
+
 def effective_k(shape: str | None, k: int | None = None) -> int:
     """Explicit k wins; else the shape override; else the CONFIG base."""
     if k is not None:
@@ -327,6 +371,7 @@ async def retrieve(text: str, k: int | None = None, shape: str | None = None,
     reading; its role-specific signal is expanded into the query before embedding.
     """
     k = effective_k(shape, k)
+    t0 = time.perf_counter()
     query = expand_query(text, reading)
     vec = embed_query(query)
     rows = await knn(vec, k)
@@ -335,6 +380,7 @@ async def retrieve(text: str, k: int | None = None, shape: str | None = None,
     # burn one of the k context slots.
     embeddings = await chunk_embeddings([str(row.get("id", "")) for row in ranked])
     top = dedup_chunks(ranked, embeddings)[:k]
+    latency.record((time.perf_counter() - t0) * 1000.0)  # feature 18: p50/p95 at /vitals
     ctx, cites = numbered_context(top)
     ids = [c.chunk_id for c in cites if c.chunk_id]
     if ids:

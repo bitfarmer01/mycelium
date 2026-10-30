@@ -50,6 +50,16 @@ async def _count(table: str):
         return None
 
 
+def _retrieval_latency() -> dict:
+    """Retrieval latency histogram (feature 18): p50/p95 over the bounded recent window."""
+    try:
+        from core.retrieve import latency
+
+        return latency.summary()
+    except Exception:  # noqa: BLE001  vitals must render even if retrieval is broken
+        return {"count": 0, "p50_ms": None, "p95_ms": None}
+
+
 @router.get("/vitals")
 async def vitals():
     baseline = None
@@ -66,6 +76,7 @@ async def vitals():
         "slot_hash": shash,
         "baseline": baseline,
         "counts": counts,
+        "retrieval": _retrieval_latency(),
         "runner": "daytona" if os.environ.get("DAYTONA_API_KEY") else "local",
         "metrics": metrics.snapshot(),
     }

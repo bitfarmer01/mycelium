@@ -39,7 +39,10 @@ function showCitation(n, sup) {
   if (c.snippet) card.appendChild(el("div", "csnip", String(c.snippet)));
   var meta = el("div", "cmeta");
   if (c.cosine != null) meta.appendChild(el("span", null, "cosine " + num(c.cosine, 3)));
+  if (c.fitness != null) meta.appendChild(el("span", null, "fitness " + num(c.fitness, 3)));
   if (c.chunk_id) meta.appendChild(el("span", null, String(c.chunk_id)));
+  /* field-level degrade: only scores the payload actually carries are rendered;
+     the meta row itself survives (it holds the close control) */
   var close = el("button", "close", "close"); close.type = "button";
   close.addEventListener("click", function () { card.hidden = true; });
   meta.appendChild(close); card.appendChild(meta);

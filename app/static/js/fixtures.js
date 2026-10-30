@@ -40,9 +40,11 @@ var FX = {
   askCited: {
     citations_resolved: "2/2",
     screen: "A discovery call follows the BS WISP skeleton [1]. Send a same-day proposal [2].",
+    /* fitness arrives with the enriched citation payload (workstream C contract); present
+       here so the provenance-card render path is exercisable in mock mode */
     citations: [
-      { n: 1, chunk_id: "chunk:ab12", title: "Discovery call playbook", link: "file:///docs/discovery.md", snippet: "A discovery call follows the BS WISP skeleton, a six-stage structure that keeps the rep in listen mode.", cosine: 0.82 },
-      { n: 2, chunk_id: "chunk:cd34", title: "Proposal guide (p. 2)", link: "https://example.org/proposal.pdf", snippet: "Promise a same-day proposal and confirm the next step before the call ends.", cosine: 0.77 }
+      { n: 1, chunk_id: "chunk:ab12", title: "Discovery call playbook", link: "file:///docs/discovery.md", snippet: "A discovery call follows the BS WISP skeleton, a six-stage structure that keeps the rep in listen mode.", cosine: 0.82, fitness: 0.667 },
+      { n: 2, chunk_id: "chunk:cd34", title: "Proposal guide (p. 2)", link: "https://example.org/proposal.pdf", snippet: "Promise a same-day proposal and confirm the next step before the call ends.", cosine: 0.77, fitness: 0.6603 }
     ]
   },
   reflect: {

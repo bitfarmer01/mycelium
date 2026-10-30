@@ -1,9 +1,8 @@
-"""Exam controls: burst history (41) and the burst cost ceiling (45).
+"""Exam controls: burst history (41), scheduled bursts (43), burst cost ceiling (45).
 
-The write side of history is growth.improve(): every burst persists one candidate row
-per candidate (status, verdict, fitness delta/mean/spread) plus gate/veto/promote
-ledger events — the candidate, the fitness deltas, and the decision. history() reads
-that record back for /exam/history.
+Workstream E surface. growth.improve() stays the manual candidate-promotion burst
+(D-owned, untouched); this module wraps it with a hard cost ceiling, drives scheduled
+runs on an injectable clock, and reads the persisted exam record back out in order.
 
 The ceiling binds at core.runner.make_runner — the seam where improve() builds its
 scorer — via a module-attribute swap held for the duration of one burst. Bursts are
@@ -12,11 +11,19 @@ serialized by a module lock so two concurrent bursts cannot fight over the seam.
 from __future__ import annotations
 
 import asyncio
+import datetime as _dt
+import logging
 import os
+from collections.abc import Callable
 from contextlib import contextmanager
+from pathlib import Path
 
 from core import db
 
+log = logging.getLogger("mycelium.exam")
+
+ROOT = Path(__file__).resolve().parents[1]
+STATE_NAME = "exam_last_burst.txt"
 HISTORY_LIMIT_MAX = 500
 LEDGER_SCAN_LIMIT = 1000
 
@@ -24,8 +31,13 @@ CANDIDATE_FIELDS = ("name", "axis", "status", "veto_reason", "verdict", "mean", 
                     "ratio", "sandbox_id", "runner", "slot_hash", "ts")
 
 
+# ---------------------------------------------------------------------------------------------------- 41: history
 async def history(limit: int = 100) -> list[dict]:
-    """Exam record oldest -> newest: one entry per persisted candidate with its ledger decisions attached."""
+    """Exam record oldest -> newest: one entry per persisted candidate with its ledger decisions attached.
+
+    Fitness deltas live on the candidate row (delta/mean/spread) and on its gate/veto/promote
+    ledger events; the decision trail is what /exam/history serves.
+    """
     limit = max(1, min(int(limit), HISTORY_LIMIT_MAX))
     rows = await db.q(f"SELECT * FROM candidate ORDER BY ts DESC LIMIT {limit}")
     ledger_rows = await db.q(f"SELECT * FROM ledger ORDER BY ts DESC LIMIT {LEDGER_SCAN_LIMIT}")
@@ -45,6 +57,7 @@ async def history(limit: int = 100) -> list[dict]:
     return out
 
 
+# ---------------------------------------------------------------------------------------------------- 45: burst ceiling
 class BurstBudgetExhausted(RuntimeError):
     """A burst's model-call budget is spent — the hard stop."""
 
@@ -130,3 +143,76 @@ async def improve_burst(budget: int | None = None) -> dict:
         "BurstBudgetExhausted" in str(r.get("veto_reason") or "") for r in out.get("candidates", [])
     )
     return out
+
+
+# ---------------------------------------------------------------------------------------------------- 43: scheduler
+def _state_path() -> Path:
+    local = Path.cwd() / "data" / STATE_NAME
+    return local if local.parent.exists() else ROOT / "data" / STATE_NAME
+
+
+def schedule_interval_minutes() -> int:
+    """Configured burst interval (EXAM_INTERVAL_MINUTES); 0 = scheduled bursts off."""
+    try:
+        return max(0, int(os.environ.get("EXAM_INTERVAL_MINUTES", "0")))
+    except ValueError:
+        return 0
+
+
+def read_last_burst(path: Path | None = None) -> _dt.datetime | None:
+    f = path or _state_path()
+    try:
+        ts = _dt.datetime.fromisoformat(f.read_text().strip())
+        return ts if ts.tzinfo else ts.replace(tzinfo=_dt.UTC)
+    except (OSError, ValueError):
+        return None
+
+
+def write_last_burst(ts: _dt.datetime, path: Path | None = None) -> None:
+    f = path or _state_path()
+    f.parent.mkdir(parents=True, exist_ok=True)
+    f.write_text(ts.isoformat() + "\n")
+
+
+class ExamScheduler:
+    """Config-driven exam trigger with an injectable clock (feature 43).
+
+    tick() runs a burst when the configured interval has elapsed since the last one and
+    records the run. Missing state counts as due: an operator who configures an interval
+    is asking for a burst, and the system has been waiting. Manual /improve is untouched.
+    """
+
+    def __init__(self, interval_minutes: int | None = None, clock: Callable[[], _dt.datetime] | None = None,
+                 improve_fn: Callable[[], dict] | None = None, state_path: Path | None = None):
+        self.interval = schedule_interval_minutes() if interval_minutes is None else int(interval_minutes)
+        self.clock = clock or (lambda: _dt.datetime.now(_dt.UTC))
+        self.improve_fn = improve_fn or improve_burst
+        self.state_path = state_path
+
+    def due(self, now: _dt.datetime | None = None) -> bool:
+        if self.interval <= 0:
+            return False
+        last = read_last_burst(self.state_path)
+        if last is None:
+            return True
+        return (now or self.clock()) - last >= _dt.timedelta(minutes=self.interval)
+
+    async def tick(self, now: _dt.datetime | None = None) -> dict | None:
+        """Run the exam burst if due; None when the interval has not elapsed."""
+        if not self.due(now):
+            return None
+        out = await self.improve_fn()
+        write_last_burst(now or self.clock(), self.state_path)
+        return out
+
+
+async def scheduler_loop(scheduler: ExamScheduler, poll_seconds: float = 60.0) -> None:
+    """Drive tick() forever; a failed burst is logged and retried on the next poll."""
+    while True:
+        try:
+            await scheduler.tick()
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:  # noqa: BLE001  graceful degradation: the API must outlive a failed burst
+            log.warning("scheduled exam burst failed: %s", type(e).__name__)
+        await asyncio.sleep(poll_seconds)

@@ -34,3 +34,12 @@ async def confirm(body: ConfirmIn):
 @router.post("/tick")
 async def tick():
     return {"decayed": await _run("learn", "decay_tick")}
+
+
+@router.get("/learning/priors")
+async def priors():
+    """Per-shape prior values with ledger edit history (feature 31)."""
+    try:
+        return await _run("learn", "priors_snapshot")
+    except Exception as e:  # db down: the dashboard degrades, the rest of the API lives on
+        raise HTTPException(status_code=503, detail=f"db unavailable: {type(e).__name__}") from e

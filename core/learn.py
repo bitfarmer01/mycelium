@@ -4,7 +4,7 @@ from __future__ import annotations
 import re
 
 from core import db
-from core.contracts import CONFIG, ROLES, LedgerRow
+from core.contracts import CONFIG, ROLES, SHAPES, LedgerRow
 
 _ID = re.compile(r"^([A-Za-z_][A-Za-z0-9_]*):(.+)$")
 
@@ -264,3 +264,24 @@ async def decay_tick() -> int:
         n += 1
     await db.q("UPSERT config:main SET last_tick = $ts", {"ts": db.now()})
     return n
+
+
+
+# ---------- prior dashboard (feature 31) ----------
+
+async def priors_snapshot() -> dict:
+    """Per-shape prior values with the ledger edit history behind them, straight from the DB rows."""
+    rows = [r for r in await db.q("SELECT id, shape, prior FROM question_shape") if isinstance(r, dict)]
+    events = [r for r in await db.q(
+        "SELECT id, target, delta, before, after, cause, ts FROM ledger"
+        " WHERE target_kind = 'shape' AND type = 'prior' ORDER BY ts") if isinstance(r, dict)]
+    stored = {str(r.get("shape")): r for r in rows if r.get("shape")}
+    uniform = [1 / len(ROLES)] * len(ROLES)
+    out = []
+    for shape in SHAPES:
+        row = stored.get(shape)
+        raw = row.get("prior") if row else None
+        prior = [float(x) for x in raw] if isinstance(raw, list) and len(raw) == len(ROLES) else uniform
+        history = [h for h in events if str(h.get("target")) == shape]
+        out.append({"shape": shape, "prior": prior, "edit_count": len(history), "history": history})
+    return {"roles": list(ROLES), "priors": out}

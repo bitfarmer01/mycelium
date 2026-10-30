@@ -154,6 +154,8 @@ async def test_docs_and_openapi_still_render_every_route(probed_client):
     assert docs.status_code == 200 and "html" in docs.headers["content-type"]
     assert schema.status_code == 200
     paths = schema.json()["paths"]
-    assert set(paths) == set(OPENAPI_METHODS), "openapi gained or lost HTTP routes"
+    # The monolith's route table must never shrink; additive workstream routes
+    # (B /search, D /learning/*, …) extend it on top.
+    assert set(OPENAPI_METHODS) <= set(paths), "openapi lost monolith routes"
     for path, methods in OPENAPI_METHODS.items():
-        assert sorted(paths[path]) == methods, f"{path}: openapi methods {sorted(paths[path])} != {methods}"
+        assert methods <= sorted(paths[path]), f"{path}: openapi methods shrank"

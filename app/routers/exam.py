@@ -34,3 +34,9 @@ async def exam_history(limit: int = 100):
 async def exam_burst():
     """Cost-capped exam burst (feature 45): improve() under EXAM_BURST_MAX_CALLS; /improve stays unlimited."""
     return await _run("exam", "improve_burst")
+
+
+@router.get("/exam/poisons")
+async def exam_poisons():
+    """Standing poison report (feature 42): persisted candidates classified against the pool's poisons."""
+    return await _run("exam", "standing_poison_report")

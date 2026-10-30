@@ -111,3 +111,19 @@ async def compact(body: CompactIn):
         return await _run("learn", "compact_ledger", body.days, body.dry_run)
     except Exception as e:
         raise HTTPException(status_code=503, detail=f"db unavailable: {type(e).__name__}") from e
+
+
+class DriftIn(BaseModel):
+    question_id: str
+    paraphrase: str
+
+
+@router.post("/learning/drift-check")
+async def drift_check(body: DriftIn):
+    """Classify a paraphrase against the question's shape; warn into the ledger feed on drift (feature 39)."""
+    try:
+        return await _run("drift", "check", body.question_id, body.paraphrase)
+    except LookupError as e:
+        raise HTTPException(status_code=404, detail=str(e)) from e
+    except Exception as e:
+        raise HTTPException(status_code=503, detail=f"drift check failed: {type(e).__name__}") from e

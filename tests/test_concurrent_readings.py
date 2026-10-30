@@ -14,7 +14,7 @@ import time
 
 import pytest
 
-import core.llm as llm
+from core import llm
 
 SCHEMA = {"type": "object", "properties": {"answer": {"type": "string"}}, "required": ["answer"]}
 
@@ -97,7 +97,7 @@ async def test_throttle_sleep_releases_the_lock(monkeypatch):
     th = threading.Thread(target=blocked)
     t0 = time.monotonic()
     th.start()
-    time.sleep(0.05)
+    await asyncio.sleep(0.05)  # non-blocking: the event loop must stay live while the thread throttles
     llm._throttle("b")  # unthrottled bucket: must not wait on a's lock-held sleep
     other_wait = time.monotonic() - t0
     th.join(timeout=3)
@@ -109,19 +109,19 @@ async def test_throttle_sleep_releases_the_lock(monkeypatch):
 
 async def test_throttled_bucket_does_not_block_concurrent_other_bucket(monkeypatch):
     _install_slow_transport(monkeypatch, think_s=0.0)
-    monkeypatch.setattr(llm, "BUCKET_LIMITS", {"growth": (1, 2.0)})
-    await llm.call_json_concurrent([llm.JsonJob("s", "q", SCHEMA, bucket="growth")])  # growth full for 2s
+    monkeypatch.setattr(llm, "BUCKET_LIMITS", {"growth": (1, 0.4)})
+    await llm.call_json_concurrent([llm.JsonJob("s", "q", SCHEMA, bucket="growth")])  # growth window opens
 
     throttled = asyncio.create_task(
         llm.call_json_concurrent([llm.JsonJob("s", "q2", SCHEMA, bucket="growth")]))
-    await asyncio.sleep(0.2)  # throttled call is now sleeping out its window
+    await asyncio.sleep(0.05)  # throttled call is now sleeping out its window
     t0 = time.monotonic()
     out = await llm.call_json_concurrent([llm.JsonJob("s", "q3", SCHEMA, bucket="voice")])
     voice_wall = time.monotonic() - t0
 
     assert out == [{"answer": "ans:q3"}]
-    assert voice_wall < 1.0, f"voice call waited {voice_wall:.2f}s behind the growth throttle"
-    throttled.cancel()  # best effort; its thread finishes out the remaining window
+    assert voice_wall < 0.3, f"voice call waited {voice_wall:.2f}s behind the growth throttle"
+    assert await throttled == [{"answer": "ans:q2"}]  # drained in-test: no call thread outlives the test
 
 
 async def test_concurrent_batch_respects_the_bucket_limit(monkeypatch):

@@ -104,10 +104,13 @@ async def test_seeded_answer_carries_the_citation_payload(client, fake_llm):
         assert r.status_code == 200, r.text
         answer = r.json()
 
-    # seeded: the question row landed in the live DB
+    # seeded: the question row landed in the live DB. Read by primary key — a
+    # `WHERE id = $id` with a string var compares String to RecordId and never
+    # matches on the current engine.
     qid = answer["question_id"]
     assert qid, "the ask must persist its question row (the seed for /correct)"
-    row = await db.q("SELECT * FROM question WHERE id = $id", {"id": qid})
+    assert re.fullmatch(r"question:[a-z0-9]+", qid), "record id is safe to interpolate"
+    row = await db.q(f"SELECT * FROM {qid}")
     assert row, f"question {qid} not found in the DB"
 
     # the citation payload: non-empty (corpus ingested), resolved, field-complete

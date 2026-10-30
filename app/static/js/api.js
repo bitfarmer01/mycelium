@@ -43,6 +43,36 @@ async function jpostForm(path, form) {
   return data || {};
 }
 
+/* PR #26 background-ingest contract: POST /upload returns 202 {job_id, status, files,
+   rejected} the moment files are saved; chunking/embedding/storing runs server-side and
+   GET /upload/status/{job_id} flips to done (carrying the full ingest result) or failed. */
+function uploadNeedsPolling(res) {
+  /* Mock mode (and a legacy synchronous server) answer with the finished result
+     directly: chunk totals instead of a job id. Those pass straight through. */
+  return res != null && res.job_id != null && res.result == null;
+}
+async function pollUpload(ack, opts) {
+  opts = opts || {};
+  var every = opts.intervalMs || 500, cap = opts.maxMs || 2000, budget = opts.timeoutMs || 120000;
+  if (!uploadNeedsPolling(ack)) return ack;
+  var t0 = Date.now(), wait = every;
+  for (;;) {
+    await delay(wait);
+    if (Date.now() - t0 > budget) throw ApiError("upload indexing timed out", 504);
+    wait = Math.min(cap, wait * 2);
+    var job;
+    try {
+      job = await jget("/upload/status/" + ack.job_id);
+    } catch (e) {
+      if (e && e.status === 404) throw ApiError("upload job expired before it finished", 410);
+      if (Date.now() - t0 > budget) throw e; /* transient blips: keep polling to the budget */
+      continue;
+    }
+    if (job.status === "done") return job.result || {};
+    if (job.status === "failed") throw ApiError(job.error || "indexing failed", 500);
+  }
+}
+
 /* ---- mock implementations ---- */
 var mockAskCount = 0;
 /* shared by mockPost("/ask") and mockStream: the fixture answer, with the
@@ -192,4 +222,4 @@ function mockPut(path, body) {
   throw ApiError("no mock for PUT " + path, 404);
 }
 
-export { jget, jpost, jput, jpostForm, streamAsk };
+export { jget, jpost, jput, jpostForm, pollUpload, streamAsk };

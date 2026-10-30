@@ -9,8 +9,8 @@ import logging
 import os
 from pathlib import Path
 
-from app.routers import api, learning, llm, retrieval
-from app.routers.common import STATIC_DIR, _audio_url, _mod, _run
+from app.routers import api, exam, learning, llm, retrieval
+from app.routers.common import STATIC_DIR, _mod, _run
 from dotenv import load_dotenv
 from fastapi import FastAPI, File, HTTPException, UploadFile
 from fastapi.responses import Response
@@ -31,22 +31,7 @@ app.include_router(api.router)
 app.include_router(retrieval.router)
 app.include_router(llm.router)
 app.include_router(learning.router)
-
-
-@app.post("/reflect")
-async def reflect():
-    out = await _run("reflect", "reflect")
-    if isinstance(out, dict):
-        spoken = out.get("spoken")
-        if not spoken:
-            spoken = " ".join(s.get("text", "") for s in out.get("sentences") or [] if isinstance(s, dict)).strip()
-        out["audio_url"] = _audio_url(spoken)
-    return out
-
-
-@app.post("/improve")
-async def improve():
-    return await _run("growth", "improve")
+app.include_router(exam.router)
 
 
 @app.post("/stt")

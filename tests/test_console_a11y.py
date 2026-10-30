@@ -110,3 +110,83 @@ def test_dark_theme_text_tokens_meet_aa() -> None:
         if (ratio := _contrast(tokens[fg], tokens[bg])) < 4.5
     ]
     assert not failures, "AA contrast violations in dark theme: " + "; ".join(failures)
+
+
+# ---------------------------------------------------------------- feature 67 --
+
+
+def _theme_tokens(theme: str) -> dict[str, str]:
+    m = re.search(rf'html\[data-theme="{theme}"\]\{{(.*?)\}}', _css(), re.DOTALL)
+    assert m, f'html[data-theme="{theme}"] token block missing (feature 67)'
+    return dict(re.findall(r"(--[\w-]+):([#\w().,/ -]+?)(?=;|$)", m.group(1)))
+
+
+def _assert_aa(
+    tokens: dict[str, str], pairs: list[tuple[str, str]], theme: str
+) -> None:
+    failures = [
+        f"{fg} on {bg}: {tokens[fg]} vs {tokens[bg]} = {ratio:.2f}"
+        for fg, bg in pairs
+        if (ratio := _contrast(tokens[fg], tokens[bg])) < 4.5
+    ]
+    assert not failures, f"AA contrast violations in {theme} theme: " + "; ".join(
+        failures
+    )
+
+
+def test_light_theme_tokens_meet_aa() -> None:
+    tokens = _theme_tokens("light")
+    _assert_aa(
+        tokens,
+        [
+            ("--ink", "--s4"),
+            ("--muted", "--s4"),
+            ("--dim", "--s4"),
+            ("--dim", "--bg"),
+            ("--green-t", "--green-l"),
+            ("--red-t", "--red-l"),
+            ("--amber-t", "--amber-l"),
+            ("--grey-t", "--grey-l"),
+            ("--blue-t", "--blue-l"),
+            ("--green", "--s1"),
+            ("--red", "--s1"),
+            ("--amber", "--s1"),
+            ("--blue", "--s1"),
+        ],
+        "light",
+    )
+
+
+def test_dim_theme_tokens_meet_aa() -> None:
+    tokens = _theme_tokens("dim")
+    _assert_aa(
+        tokens,
+        [("--ink", "--s4"), ("--muted", "--s4"), ("--dim", "--s4")],
+        "dim",
+    )
+
+
+def test_theme_module_cycles_without_reload() -> None:
+    js = (JS_DIR / "theme.js").read_text(encoding="utf-8")
+    assert "dataset.theme" in js, "theme must apply via data-theme on <html>"
+    assert "localStorage" in js, "theme preference must persist"
+    assert "cycleTheme" in js and "THEMES.indexOf" in js
+    assert "colorScheme" in js, "color-scheme hint must follow the theme"
+
+
+def test_main_wires_theme_and_header_has_toggle() -> None:
+    assert 'import "./theme.js"' in (JS_DIR / "main.js").read_text(encoding="utf-8")
+    html = _index_html()
+    assert 'id="themeBtn"' in html, "header must carry the theme toggle"
+    assert 'data-theme="light"' in html and 'data-theme="dim"' in html
+
+
+def test_reduced_motion_disables_glow_and_animation() -> None:
+    css = _css()
+    m = re.search(
+        r"@media \(prefers-reduced-motion:reduce\)\{(.*?)\}\s*@media", css, re.DOTALL
+    )
+    assert m, "prefers-reduced-motion block missing"
+    block = m.group(1)
+    assert "animation:none" in block, "reduced motion must stop animations"
+    assert "box-shadow:none" in block, "reduced motion must disable glow shadows"

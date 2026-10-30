@@ -58,11 +58,18 @@ async def test_readyz_503_when_db_down(client, monkeypatch):
 
 
 async def test_readyz_503_when_db_module_missing(client, monkeypatch):
-    # SurrealDB unreachable at import time: core.db raises, router degrades to 503.
-    def boom(name):
+    # Driver unusable at use time (e.g. the surrealdb dependency import fails): the
+    # router degrades to 503. Patch the `core` package's `db` attribute — what the
+    # route's `from core import db` actually resolves — because a sys.modules entry
+    # alone is bypassed by the already-cached package attribute.
+    import core
+
+    def boom(*a, **k):
         raise ImportError("surrealdb: connect failed")
 
-    _stub(monkeypatch, "core.db", q=boom)
+    broken = types.ModuleType("core.db")
+    broken.q = boom
+    monkeypatch.setattr(core, "db", broken, raising=True)
     async with client as c:
         r = await c.get("/readyz")
     assert r.status_code == 503

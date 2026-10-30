@@ -45,6 +45,20 @@ async function jpostForm(path, form) {
 
 /* ---- mock implementations ---- */
 var mockAskCount = 0;
+/* shared by mockPost("/ask") and mockStream: the fixture answer, with the
+   cited variant when the question names a cited topic or every other ask */
+function mockAnswer(body) {
+  mockAskCount++;
+  var base = clone(FX.ask);
+  if (body && /cite|bs wisp|playbook/i.test(String(body.text || ""))) {
+    base.citations_resolved = FX.askCited.citations_resolved;
+    base.screen = FX.askCited.screen; base.citations = clone(FX.askCited.citations);
+  } else if (mockAskCount % 2 === 0) {
+    base.citations_resolved = FX.askCited.citations_resolved;
+    base.screen = FX.askCited.screen; base.citations = clone(FX.askCited.citations);
+  }
+  return base;
+}
 async function mockGet(path) {
   if (path.indexOf("/vitals") === 0) { await delay(120); return clone(MOCK_VITALS); }
   if (path.indexOf("/config") === 0) { await delay(80); return clone(FX.config); }
@@ -52,19 +66,7 @@ async function mockGet(path) {
   throw ApiError("no mock for GET " + path, 404);
 }
 async function mockPost(path, body) {
-  if (path === "/ask") {
-    await delay(900);
-    mockAskCount++;
-    var base = clone(FX.ask);
-    if (body && /cite|bs wisp|playbook/i.test(String(body.text || ""))) {
-      base.citations_resolved = FX.askCited.citations_resolved;
-      base.screen = FX.askCited.screen; base.citations = clone(FX.askCited.citations);
-    } else if (mockAskCount % 2 === 0) {
-      base.citations_resolved = FX.askCited.citations_resolved;
-      base.screen = FX.askCited.screen; base.citations = clone(FX.askCited.citations);
-    }
-    return base;
-  }
+  if (path === "/ask") { await delay(900); return mockAnswer(body); }
   if (path === "/learning/preview") {
     await delay(160);
     var pvBefore = (state.prior && state.prior.slice()) || clone(FX.ask.prior);
@@ -100,6 +102,68 @@ async function mockPost(path, body) {
   if (path === "/stt") { await delay(420); return { text: "how do we run a discovery call?" }; }
   throw ApiError("no mock for POST " + path, 404);
 }
+/* feature 69: the ask path over /ask/stream — same answer payload as POST /ask
+   (the stream's `done` event carries it whole) plus per-stage events whose
+   cumulative `ms` feeds the answer timeline. onEvent gets every parsed event;
+   the promise resolves with the answer payload from `done`. */
+async function streamAsk(text, sessionId, onEvent) {
+  if (MOCK) return mockStream(text, sessionId, onEvent);
+  var res = await fetch("/ask/stream", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ text: text, session_id: sessionId == null ? null : sessionId }) });
+  if (!res.ok) { var d = null; try { d = await res.json(); } catch (e) {} throw parseErr(d, res); }
+  var reader = res.body.getReader(), dec = new TextDecoder(), buf = "", answer = null;
+  for (;;) {
+    var chunk = await reader.read();
+    if (chunk.done) break;
+    buf += dec.decode(chunk.value, { stream: true });
+    var idx;
+    while ((idx = buf.indexOf("\n\n")) >= 0) {
+      var frame = buf.slice(0, idx); buf = buf.slice(idx + 2);
+      var ev = parseSseFrame(frame);
+      if (!ev) continue;
+      if (ev.type === "done") answer = ev.answer;
+      if (onEvent) onEvent(ev);
+    }
+  }
+  if (!answer) throw ApiError("stream ended without an answer", 502);
+  return answer;
+}
+function parseSseFrame(frame) {
+  var type = "message", data = "";
+  frame.split("\n").forEach(function (line) {
+    if (line.indexOf("event:") === 0) type = line.slice(6).trim();
+    else if (line.indexOf("data:") === 0) data += line.slice(5).trim();
+  });
+  if (!data) return null;
+  try { var ev = JSON.parse(data); ev.type = ev.type || type; return ev; }
+  catch (e) { return null; }
+}
+/* mock stream: the same stage shape as core.answer_stream, on a clock —
+   readings resolve, then retrieval, then synthesis deltas, then done */
+function mockStream(text, sessionId, onEvent) {
+  var events = [
+    { type: "start", ms: 42 },
+    { type: "readings", ms: 684, shape: FX.ask.shape, taken: FX.ask.taken, readings: clone(FX.ask.readings) },
+    { type: "context", ms: 1291, n_chunks: 2, citations: clone(FX.askCited.citations) },
+    { type: "synthesis", delta: "…", ms: 1712 },
+    { type: "synthesis", delta: "…", ms: 2140 },
+  ];
+  return new Promise(function (resolve, reject) {
+    var i = 0;
+    (function next() {
+      if (i >= events.length) {
+        setTimeout(function () {
+          var answer = mockAnswer({ text: text });
+          onEvent({ type: "done", answer: answer, ms: answer.ms });
+          resolve(answer);
+        }, 260);
+        return;
+      }
+      var ev = events[i++];
+      setTimeout(function () { onEvent(ev); next(); }, i * 380);
+    })();
+  });
+}
+
 async function mockForm(path, form) {
   if (path !== "/upload") throw ApiError("no mock for POST " + path, 404);
   var names = [];
@@ -128,4 +192,4 @@ function mockPut(path, body) {
   throw ApiError("no mock for PUT " + path, 404);
 }
 
-export { jget, jpost, jput, jpostForm };
+export { jget, jpost, jput, jpostForm, streamAsk };

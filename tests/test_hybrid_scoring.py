@@ -1,5 +1,7 @@
-"""Feature 14: hybrid cosine+BM25 rerank (core.retrieve)."""
+"""Features 14 + 16: hybrid cosine+BM25 rerank and per-shape top-k (core.retrieve)."""
 from __future__ import annotations
+
+import asyncio
 
 import pytest
 
@@ -75,3 +77,37 @@ def test_hybrid_weight_zero_matches_plain_rerank_order():
 
 def test_hybrid_empty_rows():
     assert r.hybrid_rerank([], "query") == []
+
+
+# ---- feature 16: per-shape top-k ----
+
+
+def test_effective_k_precedence():
+    assert r.effective_k("comparison") == 12
+    assert r.effective_k("who-owns") == 6
+    assert r.effective_k("comparison", k=4) == 4  # explicit k wins over shape
+    assert r.effective_k(None) == 8  # CONFIG["knn_k"]
+    assert r.effective_k("no-such-shape") == 8  # unknown shape falls back
+    assert r.effective_k(None, k=5) == 5
+
+
+def test_all_contract_shapes_have_overrides():
+    from core.contracts import SHAPES
+
+    assert set(r.SHAPE_TOP_K) == set(SHAPES)
+
+
+def test_retrieve_applies_shape_override_to_knn(fake_db, monkeypatch):
+    monkeypatch.setattr(r, "embed_query", lambda text: [0.1] * 1024)
+    fake_db.rows["vector::similarity::cosine"] = [_row(1, "doc text")]
+    asyncio.run(r.retrieve("compare the two options", shape="comparison"))
+    knn_sql, _ = fake_db.calls[0]
+    assert "<|60," in knn_sql  # comparison -> k=12 -> pool of 60
+
+
+def test_retrieve_explicit_k_beats_shape_override(fake_db, monkeypatch):
+    monkeypatch.setattr(r, "embed_query", lambda text: [0.1] * 1024)
+    fake_db.rows["vector::similarity::cosine"] = [_row(1, "doc text")]
+    asyncio.run(r.retrieve("compare the two options", k=2, shape="comparison"))
+    knn_sql, _ = fake_db.calls[0]
+    assert "<|10," in knn_sql  # explicit k=2 -> pool of 10

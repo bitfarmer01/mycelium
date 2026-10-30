@@ -208,6 +208,20 @@ def hybrid_rerank(rows: list[dict], query: str, floor: float = 0.5, weight: floa
     return sorted(rows, key=lambda r: r["score"], reverse=True)
 
 
+# ---- per-shape top-k (feature 16) ----
+# Comparative shapes need wider candidate sets (both sides of a comparison must survive
+# the rerank cut); narrow factual shapes trade recall for precision so off-topic chunks
+# don't crowd the numbered context. Absent shape -> CONFIG["knn_k"].
+SHAPE_TOP_K = {"who-owns": 6, "how-to": 10, "policy": 10, "when": 8, "definition": 6, "comparison": 12, "factual": 6}
+
+
+def effective_k(shape: str | None, k: int | None = None) -> int:
+    """Explicit k wins; else the shape override; else the CONFIG base."""
+    if k is not None:
+        return int(k)
+    return SHAPE_TOP_K.get(shape or "") or CONFIG["knn_k"]
+
+
 def numbered_context(rows: list[dict]) -> tuple[str, list[Citation]]:
     """'[Document N (Source: <title>)]\\n<document>' blocks joined by blank lines, plus Citations (n from 1)."""
     parts, cites = [], []
@@ -228,8 +242,13 @@ def numbered_context(rows: list[dict]) -> tuple[str, list[Citation]]:
     return "\n\n".join(parts), cites
 
 
-async def retrieve(text: str, k: int = 8) -> tuple[str, list[Citation], list[dict]]:
-    """embed -> knn -> hybrid rerank[:k] -> numbered_context; bumps retrieved_count on the chosen chunks."""
+async def retrieve(text: str, k: int | None = None, shape: str | None = None) -> tuple[str, list[Citation], list[dict]]:
+    """embed -> knn -> hybrid rerank[:k] -> numbered_context; bumps retrieved_count on the chosen chunks.
+
+    `shape` (feature 16) tunes k through SHAPE_TOP_K when the caller has read the question's
+    shape; an explicit `k` wins over the override.
+    """
+    k = effective_k(shape, k)
     vec = embed_query(text)
     rows = await knn(vec, k)
     top = hybrid_rerank(rows, text, CONFIG["retrieval_fitness_floor"], CONFIG.get("bm25_weight", BM25_WEIGHT))[:k]

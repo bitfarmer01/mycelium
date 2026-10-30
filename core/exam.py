@@ -29,6 +29,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, Protocol
 
 from core import db
+from core.contracts import CONFIG, LedgerRow
 
 if TYPE_CHECKING:
     from core.runner import RunResult
@@ -238,6 +239,8 @@ async def improve_burst(budget: int | None = None, pool_slots: int | None = None
 
     cap = burst_budget() if budget is None else max(0, int(budget))
     size = pool_size() if pool_slots is None else max(0, int(pool_slots))
+    pre_version = growth.slot_version()
+    snapshot_slot()  # feature 47: remember what to roll back to before anyone can promote
     made: list[BudgetedRunner] = []
     async with _burst_lock:
         pool = _get_pool(size) if size > 0 else None
@@ -259,6 +262,10 @@ async def improve_burst(budget: int | None = None, pool_slots: int | None = None
         out["pool"] = pool.stats()
     elif size > 0:  # requested but unavailable — say so instead of failing silently
         out["pool"] = {"off": True, "requested_size": size, "reason": "no sandbox provider"}
+    if growth.slot_version() != pre_version:  # a promotion happened — hold it to its follow-up fitness (47)
+        out["rollback"] = await check_rollback(candidate=_promoted_candidate(out))
+        if out["rollback"].get("reverted"):
+            out["slot_version"] = growth.slot_version()  # the report shows the version actually live
     return out
 
 
@@ -635,3 +642,218 @@ async def scheduler_loop(scheduler: ExamScheduler, poll_seconds: float = 60.0) -
         except Exception as e:  # noqa: BLE001  graceful degradation: the API must outlive a failed burst
             log.warning("scheduled exam burst failed: %s", type(e).__name__)
         await asyncio.sleep(poll_seconds)
+
+
+# ---------------------------------------------------------------------------------------------------- 47: auto-rollback
+SNAPSHOT_NAME = "slot_pre_burst.json"
+
+
+def snapshot_path() -> Path:
+    """Where the pre-burst slot snapshot lives (same cwd/data-or-ROOT/data rule as the burst state)."""
+    local = Path.cwd() / "data" / SNAPSHOT_NAME
+    return local if local.parent.exists() else ROOT / "data" / SNAPSHOT_NAME
+
+
+def read_snapshot(path: Path | None = None) -> dict | None:
+    try:
+        snap = json.loads((path or snapshot_path()).read_text())
+        return snap if isinstance(snap, dict) and "slot" in snap and "version" in snap else None
+    except (OSError, ValueError):
+        return None
+
+
+def snapshot_slot(path: Path | None = None) -> None:
+    """Record the current slot text and version before a burst, so a regressing promotion can be undone (47)."""
+    p = path or snapshot_path()
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text(json.dumps({"version": growth_version(), "slot": growth_slot()}, indent=2) + "\n")
+
+
+def clear_snapshot(path: Path | None = None) -> None:
+    with suppress(OSError):
+        (path or snapshot_path()).unlink()
+
+
+def growth_version() -> str:
+    from core import growth
+
+    return growth.slot_version()
+
+
+def growth_slot() -> str:
+    from core import growth
+
+    return growth.load_slot()
+
+
+def rollback_floor() -> float:
+    """Follow-up fitness floor (EXAM_ROLLBACK_FLOOR); default is the documented retrieval fitness floor.
+
+    docs/required-features.md's config record lists retrieval_fitness_floor = 0.5; a promoted slot must
+    keep the live slot's held-out fitness at or above it, or the promotion is rolled back.
+    """
+    try:
+        return float(os.environ.get("EXAM_ROLLBACK_FLOOR", str(CONFIG["retrieval_fitness_floor"])))
+    except ValueError:
+        return float(CONFIG["retrieval_fitness_floor"])
+
+
+async def followup_fitness(runner=None) -> dict:
+    """Score the CURRENT slot on the held-out packs with the same scorer machinery improve() uses (47)."""
+    from core import growth
+
+    packs = growth._load_json("heldout_packs.json") or []
+    if not packs:
+        return {"mean": None, "scores": [], "n_packs": 0, "floor": rollback_floor()}
+    terms = growth._load_json("terms.json") or {}
+    rnr = runner or _runner_mod().make_runner()
+    res = await rnr.run(growth.load_slot(), packs, "followup")
+    by_q = {a["question_id"]: a.get("result") for a in res.get("answers", [])}
+    scores = [growth.score_answer(by_q.get(p["question_id"]), terms.get(p["question_id"], []),
+                                  p.get("n_docs", 0)) for p in packs]
+    mean = sum(scores) / len(scores)
+    return {"mean": mean, "scores": scores, "n_packs": len(packs), "floor": rollback_floor()}
+
+
+def _promoted_candidate(out: dict) -> str | None:
+    """Name the burst's promoted candidate: improve() promotes the best-delta gate-PASS row (growth.improve)."""
+    scored = [r for r in out.get("candidates", []) if r.get("verdict") == "PASS"]
+    if not scored:
+        return None
+    return str(max(scored, key=lambda r: r.get("delta") or 0.0).get("name"))
+
+
+async def check_rollback(runner=None, candidate: str | None = None, snapshot: Path | None = None) -> dict:
+    """Auto-rollback (feature 47): undo the last promotion when follow-up fitness drops below the floor.
+
+    A pre-burst snapshot records the slot the burst started from; if the current slot version differs
+    (growth.improve promoted) and the promoted slot's held-out fitness is below rollback_floor(), the
+    snapshot's slot text and version are restored via growth.promote and one `revert` ledger event
+    records the shortfall (delta = mean - floor, <= 0). Fitness at or above the floor closes the
+    rollback window (snapshot cleared) — the promotion stands.
+    """
+    from core import growth, learn
+
+    p = snapshot or snapshot_path()
+    snap = read_snapshot(p)
+    if snap is None:
+        return {"reverted": False, "reason": "no pre-burst snapshot"}
+    current = growth.slot_version()
+    if snap["version"] == current:
+        return {"reverted": False, "reason": f"slot still at snapshot version {current}"}
+    fit = await followup_fitness(runner)
+    result = {"followup_mean": fit["mean"], "floor": fit["floor"], "scores": fit["scores"],
+              "n_packs": fit["n_packs"]}
+    if fit["mean"] is None:
+        return {"reverted": False, "reason": "no held-out packs to score follow-up fitness", **result}
+    if fit["mean"] >= fit["floor"]:
+        clear_snapshot(p)
+        return {"reverted": False, "reason": "follow-up fitness at or above floor", **result}
+    growth.promote(snap["slot"], snap["version"])
+    floor = fit["floor"]
+    await learn.write_ledger(LedgerRow(
+        target=f"candidate:{candidate or 'slot'}", target_kind="candidate", type="revert",
+        delta=fit["mean"] - floor, before=fit["mean"], after=floor,
+        cause=f"auto-rollback: follow-up fitness {fit['mean']:.3f} below floor {floor:.3f}; "
+              f"slot reverted to v{snap['version']}"))
+    clear_snapshot(p)
+    return {"reverted": True, "version": snap["version"], **result}
+
+
+# ---------------------------------------------------------------------------------------------------- 49: share page
+SHARE_ROW_FIELDS = ("name", "axis", "status", "veto_reason", "verdict", "mean", "spread", "delta",
+                    "ratio", "runner", "ts")
+SHARE_LIMIT_MAX = 100
+
+
+async def share_payload(limit: int = 25) -> dict:
+    """Read-only snapshot for the public share page (feature 49).
+
+    Only SELECTs run here — a viewer of the link can never mutate the ledger. Any DB failure is
+    reported as an `error` field and the page renders degraded, never a 500 (demo-day resilience).
+    """
+    limit = max(1, min(int(limit), SHARE_LIMIT_MAX))
+    try:
+        rows = await db.q(f"SELECT * FROM candidate ORDER BY ts DESC LIMIT {limit}")
+        poisons = await standing_poison_report()
+        error = None
+    except Exception as e:  # noqa: BLE001 — degraded page beats a 500 on a public link
+        log.warning("share payload degraded: %s", type(e).__name__)
+        rows, poisons, error = [], None, f"{type(e).__name__}"
+    return {
+        "generated_at": db.now(),
+        "slot_version": growth_version(),
+        "candidates": [{k: row.get(k) for k in SHARE_ROW_FIELDS if k in row} for row in (rows or [])],
+        "poisons": poisons,
+        "error": error,
+    }
+
+
+def render_share_page(payload: dict) -> str:
+    """Pure HTML for the share link (feature 49): the last burst's candidates and the poison report.
+
+    Static markup only — no scripts, no forms, no POST targets — and every dynamic value is
+    escaped, so candidate names or causes from the pool cannot inject markup.
+    """
+    import html as _html
+
+    def esc(v) -> str:
+        return _html.escape(str(v if v is not None else "—"))
+
+    def fmt(v) -> str:
+        return "—" if v is None else (f"{float(v):.3f}" if isinstance(v, (int, float)) else esc(v))
+
+    head = f"""<!doctype html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex">
+<title>Mycelium — exam results</title>
+<style>
+  :root {{ color-scheme: dark; }}
+  body {{ background: #0d1117; color: #e6edf3; font: 15px/1.5 system-ui, sans-serif; margin: 2rem auto; max-width: 60rem; padding: 0 1rem; }}
+  h1 {{ font-size: 1.3rem; }} h2 {{ font-size: 1.05rem; margin-top: 2rem; }}
+  .muted {{ color: #8b949e; }}
+  .error, .empty {{ border: 1px solid #30363d; border-radius: 8px; padding: 0.75rem 1rem; margin: 1rem 0; }}
+  .error {{ border-color: #b62324; color: #ffa198; }}
+  table {{ border-collapse: collapse; width: 100%; margin: 1rem 0; }}
+  th, td {{ border: 1px solid #30363d; padding: 0.4rem 0.6rem; text-align: left; font-variant-numeric: tabular-nums; }}
+  th {{ color: #8b949e; font-weight: 500; }}
+  .pass {{ color: #3fb950; }} .veto {{ color: #f85149; }}
+</style></head><body>
+<h1>Mycelium exam results</h1>
+<p class="muted">Slot v{esc(payload.get("slot_version"))} · generated {esc(payload.get("generated_at"))} · read-only</p>"""
+
+    parts = [head]
+    if payload.get("error"):
+        parts.append(f'<p class="error">Exam data unavailable: {esc(payload["error"])}</p>')
+    cands = payload.get("candidates") or []
+    if not cands and not payload.get("error"):
+        parts.append('<p class="empty">No exam results yet — run a burst at /exam/burst.</p>')
+    if cands:
+        rows = "".join(
+            "<tr>"
+            f"<td>{esc(c.get('name'))}</td><td>{esc(c.get('axis'))}</td>"
+            f"<td>{esc(c.get('status'))}</td>"
+            f"<td class=\"{'pass' if c.get('verdict') == 'PASS' else 'veto' if c.get('verdict') else ''}\">"
+            f"{esc(c.get('verdict'))}</td>"
+            f"<td>{fmt(c.get('mean'))}</td><td>{fmt(c.get('delta'))}</td><td>{fmt(c.get('spread'))}</td>"
+            f"<td>{esc(c.get('veto_reason'))}</td><td>{esc(c.get('runner'))}</td>"
+            "</tr>"
+            for c in cands)
+        parts.append(
+            "<h2>Latest burst</h2><table><thead><tr><th>candidate</th><th>axis</th><th>status</th>"
+            "<th>verdict</th><th>mean</th><th>delta</th><th>spread</th><th>veto reason</th><th>runner</th>"
+            "</tr></thead><tbody>" + rows + "</tbody></table>")
+    poisons = payload.get("poisons")
+    if isinstance(poisons, dict) and poisons.get("entries"):
+        rows = "".join(
+            f"<tr><td>{esc(e.get('name'))}</td><td>{esc(e.get('failure_mode'))}</td>"
+            f"<td>{esc(e.get('status'))}</td><td>{fmt(e.get('mean'))}</td></tr>"
+            for e in poisons["entries"])
+        parts.append(
+            f"<h2>Poison report</h2><p class=\"muted\">threshold {fmt(poisons.get('threshold'))} · "
+            f"{esc(poisons.get('escaped_count'))} escaped</p>"
+            "<table><thead><tr><th>poison</th><th>failure mode</th><th>status</th><th>mean</th>"
+            "</tr></thead><tbody>" + rows + "</tbody></table>")
+    parts.append("</body></html>")
+    return "".join(parts)

@@ -72,3 +72,58 @@ async def undo(body: UndoIn):
         raise HTTPException(status_code=404, detail=str(e)) from e
     except ValueError as e:
         raise HTTPException(status_code=409, detail=str(e)) from e
+
+
+@router.get("/learning/export")
+async def export_state():
+    """Full learning state as JSON for backup/restore (feature 34)."""
+    try:
+        return await _run("learn", "export_state")
+    except Exception as e:
+        raise HTTPException(status_code=503, detail=f"db unavailable: {type(e).__name__}") from e
+
+
+class ImportIn(BaseModel):
+    state: dict
+    wipe: bool = True
+
+
+@router.post("/learning/import")
+async def import_state(body: ImportIn):
+    """Restore a learning-state export (feature 34)."""
+    try:
+        return await _run("learn", "import_state", body.state, body.wipe)
+    except Exception as e:
+        raise HTTPException(status_code=422, detail=f"import failed: {type(e).__name__}") from e
+
+
+class CompactIn(BaseModel):
+    days: int = 30
+    dry_run: bool = False
+
+
+@router.post("/learning/compact")
+async def compact(body: CompactIn):
+    """Fold ledger rows older than `days` into aggregates; dry_run reports first (feature 37)."""
+    if body.days < 1:
+        raise HTTPException(status_code=422, detail="days must be >= 1")
+    try:
+        return await _run("learn", "compact_ledger", body.days, body.dry_run)
+    except Exception as e:
+        raise HTTPException(status_code=503, detail=f"db unavailable: {type(e).__name__}") from e
+
+
+class DriftIn(BaseModel):
+    question_id: str
+    paraphrase: str
+
+
+@router.post("/learning/drift-check")
+async def drift_check(body: DriftIn):
+    """Classify a paraphrase against the question's shape; warn into the ledger feed on drift (feature 39)."""
+    try:
+        return await _run("drift", "check", body.question_id, body.paraphrase)
+    except LookupError as e:
+        raise HTTPException(status_code=404, detail=str(e)) from e
+    except Exception as e:
+        raise HTTPException(status_code=503, detail=f"drift check failed: {type(e).__name__}") from e

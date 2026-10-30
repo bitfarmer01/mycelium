@@ -10,6 +10,7 @@ CONFIG = {
     "beta_evidence_confirm": 1.0,
     "beta_evidence_correct": 0.0,
     "decay": 0.95,
+    "prior_decay_per_day": 0.0,  # feature 33: shape-prior decay toward uniform; 0 = off until tuned (spec rate: 0.01/day)
     "prior_rate_correct": 0.3,
     "prior_rate_uncorrected": 0.1,
     "prior_floor": 0.05,
@@ -125,7 +126,7 @@ LINT_FORBIDDEN = [
 LINT_REQUIRED = ["{context}", "{question}", "[N]", "I read that as"]
 
 TARGET_KINDS = ("chunk", "source", "shape", "candidate", "lesson", "question")
-LEDGER_TYPES = ("confirm", "correct", "prior", "decay", "veto", "gate", "promote", "lesson", "usage")
+LEDGER_TYPES = ("confirm", "correct", "prior", "decay", "veto", "gate", "promote", "lesson", "usage", "drift")
 
 
 @dataclass

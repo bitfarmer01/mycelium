@@ -1,6 +1,8 @@
 """Learning: Beta fitness per chunk/source, shape prior EMA, ledger rows, lessons, decay. No model calls."""
 from __future__ import annotations
 
+import datetime as _dt
+import hashlib
 import re
 
 from core import db
@@ -141,8 +143,8 @@ async def _move_prior(shape: str, role: str, rate: float, cause: str) -> tuple[l
     idx = _role_idx(role)
     before = await get_prior(shape)
     after = prior_update(before, idx, rate)
-    await db.q(f"UPSERT {db.rid('question_shape', shape)} SET shape = $shape, prior = $prior",
-               {"shape": shape, "prior": after})
+    await db.q(f"UPSERT {db.rid('question_shape', shape)} SET shape = $shape, prior = $prior, prior_ts = $ts",
+               {"shape": shape, "prior": after, "ts": db.now()})
     lid = await write_ledger(LedgerRow(target=shape, target_kind="shape", type="prior",
                                        delta=after[idx] - before[idx], before=before[idx],
                                        after=after[idx], cause=cause))
@@ -282,10 +284,19 @@ async def undo(correction_id: str, actor: str) -> dict:
 
 
 async def correction_count(shape: str) -> int:
-    """Cross-session attribution badge: the shape's ledger prior rows caused by corrections (feature 36)."""
+    """Cross-session attribution badge: the shape's ledger prior rows caused by corrections (feature 36).
+
+    Compacted (feature 37) rows survive here as ledger_agg totals, so the badge
+    count is the same number it was before compaction.
+    """
     rows = await db.q("SELECT cause FROM ledger WHERE target = $shape AND target_kind = 'shape' AND type = 'prior'",
                       {"shape": shape})
-    return sum(1 for r in rows if isinstance(r, dict) and str(r.get("cause") or "").startswith("correction"))
+    live_n = sum(1 for r in rows if isinstance(r, dict) and str(r.get("cause") or "").startswith("correction"))
+    aggs = await db.q("SELECT cause, total FROM ledger_agg WHERE target = $shape AND target_kind = 'shape' AND type = 'prior'",
+                      {"shape": shape})
+    agg_n = sum(int(r.get("total") or 0) for r in aggs if isinstance(r, dict)
+                and str(r.get("cause") or "").startswith("correction"))
+    return live_n + agg_n
 
 
 async def confirm(question_id: str) -> dict:
@@ -317,7 +328,170 @@ async def decay_tick() -> int:
         await write_ledger(LedgerRow(str(r["id"]), "chunk", "decay", f1 - f0, f0, f1, "decay tick"))
         n += 1
     await db.q("UPSERT config:main SET last_tick = $ts", {"ts": db.now()})
+    return n + await decay_priors()
+
+
+# ---------- prior decay toward uniform (feature 33) ----------
+
+def prior_decay(prior: list[float], days: float, rate: float | None = None) -> list[float]:
+    """Move a shape prior toward uniform, compounded per elapsed day (feature 33).
+
+    rate 0.0 (the CONFIG default) is off until tuned; 0.01 is the spec's 1%/day.
+    After 28 days at 1%/day a prior retains (1 - 0.01)^28 ≈ 0.7547 of its
+    deviation from uniform — the documented factor.
+    """
+    d = CONFIG["prior_decay_per_day"] if rate is None else rate
+    if not d:  # off by default until tuned
+        return list(prior)
+    days = max(0.0, float(days))
+    retain = (1.0 - min(1.0, max(0.0, float(d)))) ** days
+    uniform = 1 / len(prior)
+    return [uniform + (x - uniform) * retain for x in prior]
+
+
+def _age_days(ts, now: str | None = None) -> float:
+    """Elapsed days since an ISO timestamp; unparseable or missing counts as 0 (never decays)."""
+    if not ts:
+        return 0.0
+    try:
+        t = _dt.datetime.fromisoformat(str(ts))  # py3.12+ parses a trailing Z natively
+        if t.tzinfo is None:
+            t = t.replace(tzinfo=_dt.UTC)
+        n = _dt.datetime.fromisoformat(str(now)) if now else _dt.datetime.now(_dt.UTC)
+        return max(0.0, (n - t).total_seconds() / 86400)
+    except ValueError:
+        return 0.0
+
+
+async def decay_priors(rate: float | None = None, now: str | None = None) -> int:
+    """Age every stored shape prior toward uniform by the daily rate (feature 33).
+
+    A no-op (and a DB no-op) while the rate is 0. Each decayed prior gets one
+    ledger decay row so the feed shows the aging, same as chunk decay ticks.
+    """
+    d = CONFIG["prior_decay_per_day"] if rate is None else rate
+    if not d:
+        return 0
+    rows = [r for r in await db.q("SELECT id, shape, prior, prior_ts FROM question_shape")
+            if isinstance(r, dict)]
+    n = 0
+    for r in rows:
+        shape = str(r.get("shape") or "")
+        if not shape:
+            continue
+        prior = [float(x) for x in r.get("prior") or []]
+        if len(prior) != len(ROLES):
+            continue
+        days = _age_days(r.get("prior_ts"), now)
+        after = prior_decay(prior, days, d)
+        if all(abs(a - b) <= 1e-12 for a, b in zip(prior, after)):
+            continue
+        idx = max(range(len(prior)), key=lambda i: abs(prior[i] - 1 / len(ROLES)))
+        ts = db.now()
+        await db.q(f"UPSERT {db.rid('question_shape', shape)} SET shape = $shape, prior = $prior, prior_ts = $ts",
+                   {"shape": shape, "prior": after, "ts": ts})
+        await write_ledger(LedgerRow(target=shape, target_kind="shape", type="decay",
+                                     delta=after[idx] - prior[idx], before=prior[idx],
+                                     after=after[idx],
+                                     cause=f"prior decay {d}/day over {days:.0f}d"))
+        n += 1
     return n
+
+
+# ---------- learning-state export/import (feature 34) ----------
+
+async def export_state() -> dict:
+    """Full learning state for backup/restore: priors, Beta params, corrections, ledger (feature 34)."""
+    tables = {
+        "question_shape": await db.q("SELECT id, shape, prior, prior_ts FROM question_shape"),
+        "chunk": await db.q("SELECT id, alpha, beta, last_event FROM chunk"),
+        "correction": await db.q("SELECT * FROM correction"),
+        "ledger": await db.q("SELECT * FROM ledger ORDER BY ts"),
+    }
+    out = {t: [r for r in rows if isinstance(r, dict)] for t, rows in tables.items()}
+    out["version"] = 1
+    out["exported_at"] = db.now()
+    out["counts"] = {t: len(rows) for t, rows in out.items() if isinstance(rows, list)}
+    return out
+
+
+async def import_state(state: dict, wipe: bool = True) -> dict:
+    """Restore a learning-state export, wiping current state first unless wipe=False (feature 34).
+
+    The wipe clears the learning tables but never the corpus: chunk rows are
+    corpus content, so only their learning params (alpha/beta) reset, then the
+    export's values restore on top. Rows recreate under their original ids so
+    undo targets and ledger references stay valid.
+    """
+    if wipe:
+        await db.q("REMOVE TABLE ledger")
+        await db.q("REMOVE TABLE correction")
+        await db.q("REMOVE TABLE question_shape")
+        await db.q("UPDATE chunk SET alpha = 1, beta = 1")
+    restored: dict[str, int] = {}
+    for table in ("question_shape", "correction", "ledger", "chunk"):
+        n = 0
+        for row in state.get(table) or []:
+            if not isinstance(row, dict):
+                continue
+            rid = str(row.get("id") or "")
+            if ":" not in rid:
+                continue
+            ref = _ref(rid)
+            if table == "chunk":
+                # field-wise UPSERT: chunk rows are corpus content — text and
+                # embeddings must survive the restore untouched
+                await db.q(f"UPSERT {ref} SET alpha = $alpha, beta = $beta, last_event = $ev",
+                           {"alpha": row.get("alpha", 1.0), "beta": row.get("beta", 1.0),
+                            "ev": row.get("last_event")})
+            else:
+                content = {k: v for k, v in row.items() if k != "id"}
+                await db.q(f"UPSERT {ref} CONTENT $row", {"row": content})
+            n += 1
+        restored[table] = n
+    return {"restored": restored, "exported_at": state.get("exported_at")}
+
+
+# ---------- ledger compaction (feature 37) ----------
+
+async def compact_ledger(days: int, dry_run: bool = False) -> dict:
+    """Fold ledger rows older than `days` into per-cause aggregates, then delete them (feature 37).
+
+    Every deleted row's (target, target_kind, type, cause) group lands in the
+    ledger_agg table, so the counts downstream consumers read — correction
+    attribution, prior edit history — survive compaction. dry_run=True reports
+    what would be deleted without touching anything.
+    """
+    cutoff = (_dt.datetime.now(_dt.UTC) - _dt.timedelta(days=days)).isoformat()
+    old = [r for r in await db.q("SELECT id, target, target_kind, type, cause, ts FROM ledger WHERE ts < $c",
+                                 {"c": cutoff}) if isinstance(r, dict)]
+    groups: dict[tuple[str, str, str, str], dict] = {}
+    for r in old:
+        key = (str(r.get("target")), str(r.get("target_kind")), str(r.get("type")), str(r.get("cause")))
+        g = groups.setdefault(key, {"count": 0, "first_ts": r.get("ts"), "last_ts": r.get("ts")})
+        g["count"] += 1
+        ts = str(r.get("ts") or "")
+        if ts < str(g["first_ts"] or ""):
+            g["first_ts"] = ts
+        if ts > str(g["last_ts"] or ""):
+            g["last_ts"] = ts
+    aggregates = [dict(target=k[0], target_kind=k[1], type=k[2], cause=k[3], **v)
+                  for k, v in groups.items()]
+    if dry_run:
+        return {"dry_run": True, "cutoff": cutoff, "would_delete": len(old), "aggregates": aggregates}
+    for agg in aggregates:
+        h = hashlib.sha1("|".join([agg["target"], agg["target_kind"], agg["type"], agg["cause"]])
+                         .encode()).hexdigest()[:16]
+        ref = db.rid("ledger_agg", h)
+        rows = await db.q(f"SELECT total FROM {ref}")
+        prev = int(rows[0]["total"]) if rows and isinstance(rows[0], dict) and rows[0].get("total") else 0
+        await db.q(f"UPSERT {ref} SET target = $t, target_kind = $tk, type = $ty, cause = $c, "
+                   "total = $n, first_ts = $f, last_ts = $l",
+                   {"t": agg["target"], "tk": agg["target_kind"], "ty": agg["type"],
+                    "c": agg["cause"], "n": prev + agg["count"],
+                    "f": agg["first_ts"], "l": agg["last_ts"]})
+    await db.q("DELETE ledger WHERE ts < $c", {"c": cutoff})
+    return {"dry_run": False, "cutoff": cutoff, "deleted": len(old), "aggregates": len(aggregates)}
 
 
 
@@ -329,6 +503,11 @@ async def priors_snapshot() -> dict:
     events = [r for r in await db.q(
         "SELECT id, target, delta, before, after, cause, ts FROM ledger"
         " WHERE target_kind = 'shape' AND type = 'prior' ORDER BY ts") if isinstance(r, dict)]
+    # feature 37: compacted prior events survive as per-cause totals — they keep
+    # counting toward edit history even though their rows are gone
+    aggs = [r for r in await db.q(
+        "SELECT target, cause, total FROM ledger_agg WHERE target_kind = 'shape' AND type = 'prior'")
+        if isinstance(r, dict)]
     stored = {str(r.get("shape")): r for r in rows if r.get("shape")}
     uniform = [1 / len(ROLES)] * len(ROLES)
     out = []
@@ -337,5 +516,9 @@ async def priors_snapshot() -> dict:
         raw = row.get("prior") if row else None
         prior = [float(x) for x in raw] if isinstance(raw, list) and len(raw) == len(ROLES) else uniform
         history = [h for h in events if str(h.get("target")) == shape]
-        out.append({"shape": shape, "prior": prior, "edit_count": len(history), "history": history})
+        compacted = sum(int(a.get("total") or 0) for a in aggs
+                        if str(a.get("target")) == shape
+                        and str(a.get("cause") or "").startswith("correction"))
+        out.append({"shape": shape, "prior": prior, "edit_count": len(history) + compacted,
+                    "compacted_events": compacted, "history": history})
     return {"roles": list(ROLES), "priors": out}

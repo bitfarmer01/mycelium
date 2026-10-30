@@ -89,8 +89,8 @@ def test_correction_never_raises_fitness(fake_db):
     fake_db.rows[""] = _router(state)
     out = asyncio.run(learn.correct("question:q1", "intent"))
 
-    for k in before:
-        assert learn.fitness(state[k]["alpha"], state[k]["beta"]) <= before[k]
+    for k, prior in before.items():
+        assert learn.fitness(state[k]["alpha"], state[k]["beta"]) <= prior
     ledgers = [v["row"] for s, v in fake_db.calls if s.startswith("CREATE ledger")]
     correct_rows = [r for r in ledgers if r["type"] == "correct"]
     assert {r["target"] for r in correct_rows if r["target_kind"] == "chunk"} == {"chunk:a", "chunk:b"}
@@ -128,3 +128,62 @@ def test_decay_moves_toward_half(fake_db):
     assert ups and ups[0][1]["alpha"] == pytest.approx(1 + 0.95 * 4)
     assert not any(s.startswith("UPDATE chunk:b") for s in fake_db.sql())
     assert any("last_tick" in s for s in fake_db.sql())
+
+
+
+# ---------- golden values (feature 40) ----------
+# These pin the exact EMA / Beta outputs so the documented formula can never
+# drift silently. Golden values were computed from core/learn.py as merged on
+# main; if one of these fails, the learning math changed — intentionally or not.
+
+_G = pytest.approx  # readability
+
+
+def test_golden_beta_update_and_uncertainty():
+    # evidence 0.8 on (1,1): alpha gains 2*(0.8-0.5)=0.6
+    assert learn.beta_update(1.0, 1.0, 0.8) == _G((1.6, 1.0), rel=1e-12)
+    # evidence 0.0 on (2.5, 1.7): beta gains 2*0.5=1.0
+    assert learn.beta_update(2.5, 1.7, 0.0) == _G((2.5, 2.7), rel=1e-12)
+    # evidence clamps to [0,1]
+    assert learn.beta_update(1.0, 1.0, 5.0) == _G((2.0, 1.0), rel=1e-12)
+    assert learn.beta_update(1.0, 1.0, -3.0) == _G((1.0, 2.0), rel=1e-12)
+    # closed-form variance-derived uncertainty
+    assert learn.uncertainty(1.0, 1.0) == _G(1 / 3, rel=1e-12)
+    assert learn.uncertainty(1.0, 2.0) == _G(2 / 9, rel=1e-12)
+
+
+def test_golden_decay():
+    assert learn.decay_ab(1.6, 1.2) == _G((1.57, 1.19), rel=1e-12)  # CONFIG decay 0.95
+    assert learn.decay_ab(3.0, 1.0, 0.5) == _G((2.0, 1.0), rel=1e-12)  # explicit rate
+    assert learn.decay_ab(1.0, 1.0) == _G((1.0, 1.0), rel=1e-12)  # uniform is the fixed point
+
+
+def test_golden_prior_sequence_three_corrections():
+    # Fixed sequence: three corrections toward "intent" (idx 1) from a uniform prior,
+    # rate 0.3. Closed form for one move: p_r += r*(1-p_r), then normalized
+    # (floor never binds here until rate 0.3 saturates; check exact values).
+    p = [1 / 3] * 3
+    for _ in range(3):
+        p = learn.prior_update(p, 1, CONFIG["prior_rate_correct"])
+    assert p == _G([0.11433333333333334, 0.7713333333333333, 0.11433333333333334], rel=1e-12)
+
+
+def test_golden_prior_sequence_mixed_roles():
+    # Fixed mixed sequence: intent, intent, intent, literal, scope, intent.
+    # Bit-exact golden output pinned against the merged implementation.
+    seq = [1, 1, 1, 0, 2, 1]
+    p = [1 / 3] * 3
+    for idx in seq:
+        p = learn.prior_update(p, idx, CONFIG["prior_rate_correct"])
+    assert p[0].hex() == "0x1.7d5efd2d2e7e0p-3"
+    assert p[1].hex() == "0x1.210ef8321cfa5p-1"
+    assert p[2].hex() == "0x1.fe65220a5d98ap-3"
+
+
+def test_golden_prior_floor_engagement():
+    # 100 corrections toward role 0 from uniform: everything except role 0 hits
+    # the 0.05 floor; role 0 absorbs the remaining mass.
+    p = [1 / 3] * 3
+    for _ in range(100):
+        p = learn.prior_update(p, 0, 0.3)
+    assert p == _G([0.9, 0.05, 0.05], abs=1e-9)

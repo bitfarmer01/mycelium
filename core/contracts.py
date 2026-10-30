@@ -10,6 +10,7 @@ CONFIG = {
     "beta_evidence_confirm": 1.0,
     "beta_evidence_correct": 0.0,
     "decay": 0.95,
+    "prior_decay_per_day": 0.0,  # feature 33: shape-prior decay toward uniform; 0 = off until tuned (spec rate: 0.01/day)
     "prior_rate_correct": 0.3,
     "prior_rate_uncorrected": 0.1,
     "prior_floor": 0.05,

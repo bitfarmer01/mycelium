@@ -1,6 +1,8 @@
 """Learning: Beta fitness per chunk/source, shape prior EMA, ledger rows, lessons, decay. No model calls."""
 from __future__ import annotations
 
+import datetime as _dt
+import hashlib
 import re
 
 from core import db
@@ -141,8 +143,8 @@ async def _move_prior(shape: str, role: str, rate: float, cause: str) -> tuple[l
     idx = _role_idx(role)
     before = await get_prior(shape)
     after = prior_update(before, idx, rate)
-    await db.q(f"UPSERT {db.rid('question_shape', shape)} SET shape = $shape, prior = $prior",
-               {"shape": shape, "prior": after})
+    await db.q(f"UPSERT {db.rid('question_shape', shape)} SET shape = $shape, prior = $prior, prior_ts = $ts",
+               {"shape": shape, "prior": after, "ts": db.now()})
     lid = await write_ledger(LedgerRow(target=shape, target_kind="shape", type="prior",
                                        delta=after[idx] - before[idx], before=before[idx],
                                        after=after[idx], cause=cause))
@@ -317,8 +319,74 @@ async def decay_tick() -> int:
         await write_ledger(LedgerRow(str(r["id"]), "chunk", "decay", f1 - f0, f0, f1, "decay tick"))
         n += 1
     await db.q("UPSERT config:main SET last_tick = $ts", {"ts": db.now()})
-    return n
+    return n + await decay_priors()
 
+
+# ---------- prior decay toward uniform (feature 33) ----------
+
+def prior_decay(prior: list[float], days: float, rate: float | None = None) -> list[float]:
+    """Move a shape prior toward uniform, compounded per elapsed day (feature 33).
+
+    rate 0.0 (the CONFIG default) is off until tuned; 0.01 is the spec's 1%/day.
+    After 28 days at 1%/day a prior retains (1 - 0.01)^28 ≈ 0.7547 of its
+    deviation from uniform — the documented factor.
+    """
+    d = CONFIG["prior_decay_per_day"] if rate is None else rate
+    if not d:  # off by default until tuned
+        return list(prior)
+    days = max(0.0, float(days))
+    retain = (1.0 - min(1.0, max(0.0, float(d)))) ** days
+    uniform = 1 / len(prior)
+    return [uniform + (x - uniform) * retain for x in prior]
+
+
+def _age_days(ts, now: str | None = None) -> float:
+    """Elapsed days since an ISO timestamp; unparseable or missing counts as 0 (never decays)."""
+    if not ts:
+        return 0.0
+    try:
+        t = _dt.datetime.fromisoformat(str(ts))  # py3.12+ parses a trailing Z natively
+        if t.tzinfo is None:
+            t = t.replace(tzinfo=_dt.UTC)
+        n = _dt.datetime.fromisoformat(str(now)) if now else _dt.datetime.now(_dt.UTC)
+        return max(0.0, (n - t).total_seconds() / 86400)
+    except ValueError:
+        return 0.0
+
+
+async def decay_priors(rate: float | None = None, now: str | None = None) -> int:
+    """Age every stored shape prior toward uniform by the daily rate (feature 33).
+
+    A no-op (and a DB no-op) while the rate is 0. Each decayed prior gets one
+    ledger decay row so the feed shows the aging, same as chunk decay ticks.
+    """
+    d = CONFIG["prior_decay_per_day"] if rate is None else rate
+    if not d:
+        return 0
+    rows = [r for r in await db.q("SELECT id, shape, prior, prior_ts FROM question_shape")
+            if isinstance(r, dict)]
+    n = 0
+    for r in rows:
+        shape = str(r.get("shape") or "")
+        if not shape:
+            continue
+        prior = [float(x) for x in r.get("prior") or []]
+        if len(prior) != len(ROLES):
+            continue
+        days = _age_days(r.get("prior_ts"), now)
+        after = prior_decay(prior, days, d)
+        if all(abs(a - b) <= 1e-12 for a, b in zip(prior, after)):
+            continue
+        idx = max(range(len(prior)), key=lambda i: abs(prior[i] - 1 / len(ROLES)))
+        ts = db.now()
+        await db.q(f"UPSERT {db.rid('question_shape', shape)} SET shape = $shape, prior = $prior, prior_ts = $ts",
+                   {"shape": shape, "prior": after, "ts": ts})
+        await write_ledger(LedgerRow(target=shape, target_kind="shape", type="decay",
+                                     delta=after[idx] - prior[idx], before=prior[idx],
+                                     after=after[idx],
+                                     cause=f"prior decay {d}/day over {days:.0f}d"))
+        n += 1
+    return n
 
 
 # ---------- prior dashboard (feature 31) ----------

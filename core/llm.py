@@ -10,7 +10,8 @@ caller-supplied dict, summed across attempts), an in-process session response ca
 in a session return the cached answer marked `cached: true` with no model call), and per-bucket timeout
 tiers (`bucket_timeout`: follow-up questions get a short timeout, reflection a long one, both
 configurable via env). Model routing (feature 27, opt-in via MYCELIUM_CHEAP_MODEL) sends readings to
-a cheap model while synthesis stays on Opus.
+a cheap model while synthesis stays on Opus. PartialJSONStream renders a synthesis object
+incrementally as chunks arrive (feature 29).
 """
 from __future__ import annotations
 
@@ -26,7 +27,7 @@ import subprocess
 import threading
 import time
 from collections import deque
-from collections.abc import Sequence
+from collections.abc import Iterable, Iterator, Sequence
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from functools import partial
@@ -363,6 +364,125 @@ def route_env(role: str | None) -> dict | None:
     env = dict(os.environ)
     env["ANTHROPIC_MODEL"] = model
     return env
+
+
+# ---------------------------------------------------------------------------------------------------- streaming JSON parsing (feature 29)
+class PartialJSONStream:
+    """Incremental renderer for one JSON object arriving in chunks (synthesis over a token stream).
+
+    feed() scans what has arrived and returns the top-level string fields the new chunk completed
+    as (key, value) pairs — spoken/screen surface the moment their closing quote lands, while the
+    model is still writing the rest. Nested objects and arrays (claims, contradictions, gaps) are
+    tracked for structure but never emitted. finish() tolerates a truncated final chunk: an
+    in-flight top-level string value is emitted once with the text that arrived (best-effort
+    unescape, a dangling partial escape dropped) and nothing ever raises. Prose or a ```json fence
+    around the object is handled by opening at the first '{'. Duplicate keys keep their first
+    value; one object per stream.
+    """
+
+    def __init__(self) -> None:
+        self._buf = ""
+        self._pos = 0  # scan cursor into _buf: everything before it is fully consumed
+        self._depth = 0
+        self._in_str = False
+        self._esc = False
+        self._str_open_depth = 0
+        self._str_start = 0
+        self._pending_key: str | None = None
+        self._await_value = False
+        self._opened = False
+        self._done = False
+        self._emitted: set[str] = set()
+
+    def feed(self, chunk: str) -> list[tuple[str, str]]:
+        self._buf += chunk
+        return self._scan(final=False)
+
+    def finish(self) -> list[tuple[str, str]]:
+        return self._scan(final=True)
+
+    def _emit(self, key: str, value: str) -> list[tuple[str, str]]:
+        if key in self._emitted:
+            return []
+        self._emitted.add(key)
+        return [(key, value)]
+
+    def _scan(self, final: bool) -> list[tuple[str, str]]:
+        ev: list[tuple[str, str]] = []
+        buf, n = self._buf, len(self._buf)
+        i = self._pos
+        while i < n and not self._done:
+            ch = buf[i]
+            if self._in_str:
+                if self._esc:
+                    self._esc = False
+                elif ch == "\\":
+                    self._esc = True
+                elif ch == '"':
+                    self._in_str = False
+                    ev += self._on_str_end(buf[self._str_start + 1:i])
+                i += 1
+                continue
+            if ch == '"':
+                self._in_str = True
+                self._str_open_depth = self._depth
+                self._str_start = i
+            elif ch in "{[":
+                if self._depth == 0:
+                    self._opened = True
+                self._depth += 1
+            elif ch in "}]":
+                if self._depth > 0:
+                    self._depth -= 1
+                    if self._depth == 0 and self._opened:
+                        self._done = True  # object closed: the rest is trailing junk
+                self._await_value = False
+            elif ch == ":":
+                if self._pending_key is not None:
+                    self._await_value = True
+            elif ch == ",":
+                self._pending_key = None
+                self._await_value = False
+            # any other char outside a string — whitespace, fence markers, prose — is skipped
+            i += 1
+        if final and self._in_str and self._opened and self._str_open_depth == 1 \
+                and self._await_value and self._pending_key is not None:
+            # truncated mid-value: emit the partial text once instead of dropping it
+            key, self._pending_key, self._await_value, self._in_str = self._pending_key, None, False, False
+            ev += self._emit(key, self._unescape_tail(buf[self._str_start + 1:]))
+        self._pos = i
+        return ev
+
+    def _on_str_end(self, raw: str) -> list[tuple[str, str]]:
+        if not self._opened or self._str_open_depth != 1:
+            return []  # nested or pre-object string
+        if self._await_value and self._pending_key is not None:
+            key, self._pending_key, self._await_value = self._pending_key, None, False
+            return self._emit(key, self._unescape(raw))
+        self._pending_key = self._unescape(raw)  # a depth-1 string is a key until a colon proves otherwise
+        self._await_value = False
+        return []
+
+    @staticmethod
+    def _unescape(raw: str) -> str:
+        try:
+            val = json.loads(f'"{raw}"')
+        except (json.JSONDecodeError, ValueError):
+            return raw  # tolerate raw control chars and the like; the text is still worth showing
+        return val if isinstance(val, str) else raw
+
+    @staticmethod
+    def _unescape_tail(raw: str) -> str:
+        cleaned = re.sub(r"\\(u[0-9a-fA-F]{0,3})?$", "", raw)  # drop a dangling partial escape
+        return PartialJSONStream._unescape(cleaned)
+
+
+def stream_json_fields(chunks: Iterable[str]) -> Iterator[tuple[str, str]]:
+    """Feed a chunk stream through one PartialJSONStream; (key, value) events as fields complete."""
+    stream = PartialJSONStream()
+    for chunk in chunks:
+        yield from stream.feed(chunk)
+    yield from stream.finish()
 
 
 # ---------------------------------------------------------------------------------------------------- concurrent batch (feature 21)

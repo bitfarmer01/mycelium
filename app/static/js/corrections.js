@@ -4,6 +4,7 @@ import { jpost } from "./api.js";
 import { setStatus } from "./status.js";
 import { travelPrior, setPrior } from "./prior.js";
 import { showPreview } from "./preview.js";
+import { showCorrectSkeleton, hideSkeletons } from "./skeletons.js";
 import { feedAdd, feedEl } from "./feed.js";
 import { scheduleVitals } from "./vitals.js";
 
@@ -58,11 +59,13 @@ async function correct(toRole) {
   var q = state.ask;
   if (!q || q.question_id == null) { setStatus("ask something first", "err"); return; }
   markCorrecting(toRole); setStatus("calculating the prior delta…", "busy");
+  showCorrectSkeleton();  /* feature 68: on screen before the await, never dead air */
   try {
     var pv = await jpost("/learning/preview", { question_id: q.question_id, to_role: toRole, confidence: 1.0 });
+    hideSkeletons();
     setStatus("preview ready — nothing written until you submit", "ok");
     showPreview(pv, function () { submitCorrect(pv.to_role); }, function () { markCorrecting(null); setStatus("correction dismissed — nothing written", "ok"); });
-  } catch (e) { markCorrecting(null); setStatus("preview failed: " + e.message, "err"); }
+  } catch (e) { hideSkeletons(); markCorrecting(null); setStatus("preview failed: " + e.message, "err"); }
 }
 async function submitCorrect(toRole) {
   var q = state.ask;

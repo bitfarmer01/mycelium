@@ -75,7 +75,8 @@ async def readings(text: str, usage: dict | None = None, session: str | None = N
     err = _llm_error()
     shape_guess = classify_shape(text)
     try:
-        out = await _call(llm.call_json, READINGS_SYSTEM, text, READINGS_SCHEMA, usage=usage, session=session)
+        out = await _call(llm.call_json, READINGS_SYSTEM, text, READINGS_SCHEMA, usage=usage, session=session,
+                          role="readings")
     except err:
         return _literal_only(text, shape_guess)
     if not isinstance(out, dict):
@@ -207,7 +208,8 @@ async def synthesize(text: str, context: str, slot_text: str, usage: dict | None
     err = _llm_error()
     system = growth.render_prompt(slot_text, context, text)  # render_prompt already appends CONTRACT
     try:
-        out = await _call(llm.call_json, system, text, SYNTHESIS_SCHEMA, usage=usage, session=session)
+        out = await _call(llm.call_json, system, text, SYNTHESIS_SCHEMA, usage=usage, session=session,
+                          role="synthesis")
         if not isinstance(out, dict):
             raise TypeError("synthesis was not an object")
     except (err, TypeError):

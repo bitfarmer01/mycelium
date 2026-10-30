@@ -9,7 +9,8 @@ Reliability features: token accounting (`call_json`/`call_text` fold the CLI env
 caller-supplied dict, summed across attempts), an in-process session response cache (repeat questions
 in a session return the cached answer marked `cached: true` with no model call), and per-bucket timeout
 tiers (`bucket_timeout`: follow-up questions get a short timeout, reflection a long one, both
-configurable via env).
+configurable via env). Model routing (feature 27, opt-in via MYCELIUM_CHEAP_MODEL) sends readings to
+a cheap model while synthesis stays on Opus.
 """
 from __future__ import annotations
 
@@ -189,7 +190,7 @@ def bucket_timeout(bucket: str) -> float:
 
 
 SESSION_CACHE_MAX = 256  # bounded: one entry per distinct question text per session
-_session_cache: dict[tuple[str, str, str, str], tuple[float, dict]] = {}
+_session_cache: dict[tuple[str, str, str, str, str | None], tuple[float, dict]] = {}
 _session_cache_lock = threading.Lock()
 
 
@@ -199,16 +200,18 @@ def session_cache_enabled() -> bool:
     return True if raw is None else raw.strip().lower() not in ("0", "off", "false", "no")
 
 
-def _cache_key(session: str, system: str, schema: dict | None, user: str) -> tuple[str, str, str, str]:
+def _cache_key(session: str, system: str, schema: dict | None, user: str,
+               role: str | None = None) -> tuple[str, str, str, str, str | None]:
     s = json.dumps(schema, sort_keys=True) if schema else "-"
-    return (str(session), system, s, user)
+    return (str(session), system, s, user, role)
 
 
-def session_cache_get(session: str | None, system: str, schema: dict | None, user: str) -> dict | None:
+def session_cache_get(session: str | None, system: str, schema: dict | None, user: str,
+                      role: str | None = None) -> dict | None:
     """The cached answer for this exact call within the session, marked cached: true; None on any miss."""
     if not session or not session_cache_enabled():
         return None
-    key = _cache_key(session, system, schema, user)
+    key = _cache_key(session, system, schema, user, role)
     with _session_cache_lock:
         row = _session_cache.get(key)
     if row is None:
@@ -221,13 +224,14 @@ def session_cache_get(session: str | None, system: str, schema: dict | None, use
     return dict(val, cached=True)
 
 
-def session_cache_put(session: str | None, system: str, schema: dict | None, user: str, result: dict) -> None:
+def session_cache_put(session: str | None, system: str, schema: dict | None, user: str, result: dict,
+                      role: str | None = None) -> None:
     if not session or not session_cache_enabled():
         return
     with _session_cache_lock:
         if len(_session_cache) >= SESSION_CACHE_MAX:
             _session_cache.pop(min(_session_cache, key=lambda k: _session_cache[k][0]))
-        _session_cache[_cache_key(session, system, schema, user)] = (time.monotonic(), dict(result))
+        _session_cache[_cache_key(session, system, schema, user, role)] = (time.monotonic(), dict(result))
 
 
 def reset_session_cache() -> None:
@@ -267,7 +271,7 @@ def _cold_run_schema(system: str, schema: dict, user: str, *, timeout_s: float, 
 
 def call_json(system: str, user: str, schema: dict, *, timeout_s: float | None = None, bucket: str = "voice",
               retries: int = 2, env: dict | None = None, usage: dict | None = None,
-              session: str | None = None) -> dict:
+              session: str | None = None, role: str | None = None) -> dict:
     """One schema-validated model call.
 
     usage: optional accounting dict — the CLI envelope's usage fields (summed across every attempt,
@@ -275,11 +279,15 @@ def call_json(system: str, user: str, schema: dict, *, timeout_s: float | None =
     session: opt-in cache scope — an identical (system, user, schema) call in the same session returns the
     cached answer marked cached: true without any model call (feature 25).
     timeout_s: explicit value wins; otherwise the bucket's timeout tier applies (feature 26).
+    role: model-routing tier (feature 27) — "readings" rides the cheap model and "synthesis" stays on
+    Opus when MYCELIUM_CHEAP_MODEL is set; unrouted roles and routing-off behave exactly as before.
     """
     t_s = timeout_s if timeout_s is not None else bucket_timeout(bucket)
-    hit = session_cache_get(session, system, schema, user)
+    hit = session_cache_get(session, system, schema, user, role=role)
     if hit is not None:
         return hit
+    if env is None:
+        env = route_env(role)
     result = None
     if env is None and daemon_enabled():
         try:
@@ -296,7 +304,7 @@ def call_json(system: str, user: str, schema: dict, *, timeout_s: float | None =
             return _cold_run_schema(system, schema, prompt, timeout_s=t_s, bucket=bucket, env=env)
 
         result = _schema_retry_loop(run_once, user, schema, retries, usage)
-    session_cache_put(session, system, schema, user, result)
+    session_cache_put(session, system, schema, user, result, role=role)
     return result
 
 
@@ -320,6 +328,41 @@ def call_text(system: str, user: str, *, timeout_s: float | None = None, bucket:
         return str(json.loads(proc.stdout).get("result", "")).strip()
     except (json.JSONDecodeError, AttributeError) as e:
         raise LLMError(f"CLI stdout is not JSON: {e}") from e
+
+
+# ---------------------------------------------------------------------------------------------------- model routing (feature 27)
+OPUS_MODEL_ID = "us.anthropic.claude-opus-4-5-20251101-v1:0"  # the synthesis tier; same id core.runner uses for Bedrock
+CHEAP_MODEL_ENV = "MYCELIUM_CHEAP_MODEL"  # set to a cheap model id to activate role routing
+
+
+def routing_enabled() -> bool:
+    """Role routing is opt-in: MYCELIUM_CHEAP_MODEL set (to any model id) turns it on; unset means today's behavior."""
+    return bool(os.environ.get(CHEAP_MODEL_ENV, "").strip())
+
+
+def cheap_model_id() -> str:
+    return os.environ.get(CHEAP_MODEL_ENV, "").strip()
+
+
+def route_env(role: str | None) -> dict | None:
+    """Subprocess env for a routed role: readings carry the cheap model, synthesis carries Opus.
+
+    Returns None when routing is off or the role is unrouted, so callers behave exactly as before.
+    A routed call always takes the cold CLI path: the warm daemon serves a (system, schema) key under
+    whatever env it spawned with, and a per-role model must not depend on daemon warmth. The env is a
+    full copy of os.environ with only ANTHROPIC_MODEL overridden — auth and region pass through.
+    """
+    if not role or not routing_enabled():
+        return None
+    if role == "readings":
+        model = cheap_model_id()
+    elif role == "synthesis":
+        model = OPUS_MODEL_ID
+    else:
+        return None
+    env = dict(os.environ)
+    env["ANTHROPIC_MODEL"] = model
+    return env
 
 
 # ---------------------------------------------------------------------------------------------------- concurrent batch (feature 21)

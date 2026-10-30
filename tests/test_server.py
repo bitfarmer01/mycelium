@@ -141,11 +141,12 @@ async def test_root_serves_placeholder_or_index(client):
 async def test_upload_ingests_supported_and_rejects_others(monkeypatch, tmp_path):
     import httpx
 
+    import app.routers.retrieval as retrieval
     import app.server as srv
     import scripts.ingest as ing
 
     stored = {}
-    monkeypatch.setattr(srv, "UPLOAD_DIR", tmp_path)
+    monkeypatch.setattr(retrieval, "UPLOAD_DIR", tmp_path)
     monkeypatch.setattr(ing, "embed", lambda texts: [[0.0] * 1024 for _ in texts])
 
     async def fake_store(chunks, sources, replace_paths=None):
@@ -170,11 +171,12 @@ async def test_upload_ingests_supported_and_rejects_others(monkeypatch, tmp_path
 async def test_upload_limits_chunk_cap_and_busy(monkeypatch, tmp_path):
     import httpx
 
+    import app.routers.retrieval as retrieval
     import app.server as srv
     import scripts.ingest as ing
 
-    monkeypatch.setattr(srv, "UPLOAD_DIR", tmp_path)
-    monkeypatch.setattr(srv, "UPLOAD_MAX_CHUNKS", 1)
+    monkeypatch.setattr(retrieval, "UPLOAD_DIR", tmp_path)
+    monkeypatch.setattr(retrieval, "UPLOAD_MAX_CHUNKS", 1)
     called = []
     monkeypatch.setattr(ing, "embed", lambda texts: called.append(1) or [[0.0] * 1024 for _ in texts])
     big = ("files", ("big.txt", (" ".join(["word"] * 900)).encode(), "text/plain"))
@@ -182,9 +184,9 @@ async def test_upload_limits_chunk_cap_and_busy(monkeypatch, tmp_path):
         r = await c.post("/upload", files=[big])
         assert r.status_code == 413 and "exceeds the limit" in r.json()["detail"]
         assert not called and not (tmp_path / "big.txt").exists()  # rejected before embedding, file removed
-        await srv._upload_lock.acquire()
+        await retrieval._upload_lock.acquire()
         try:
             r = await c.post("/upload", files=[("files", ("a.md", b"# A\n\nhi", "text/markdown"))])
             assert r.status_code == 429
         finally:
-            srv._upload_lock.release()
+            retrieval._upload_lock.release()

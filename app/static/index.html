@@ -179,6 +179,7 @@
 
   .chips{display:flex; gap:8px; flex-wrap:wrap; margin:0 0 12px}
   .chip{
+    position:relative; z-index:0;
     font:inherit; text-align:left; cursor:pointer; color:var(--ink);
     background:#0b0e13; border:1px solid var(--line2); border-radius:var(--r2); padding:9px 10px;
     display:flex; flex-direction:column; gap:3px; flex:1 1 168px; min-width:0;
@@ -190,9 +191,27 @@
   .chip .chead b{color:var(--ink); font-weight:650}
   .chip .cbody{font-size:13px; color:var(--ink)}
   .chip .cnum{font-family:var(--mono); font-size:11px; color:var(--dim)}
-  .chip.taken{border-color:var(--green-b); background:linear-gradient(180deg,var(--green-l),#0a1712); box-shadow:var(--glow-g)}
+  /* taken chip: visually dominant — ringed border, stronger glow, brighter body */
+  .chip.taken{
+    border:2px solid var(--green-b); border-radius:calc(var(--r2) - 1px); padding:8px 9px;
+    background:linear-gradient(180deg,var(--green-l),#0a1712);
+    box-shadow:0 0 0 1px var(--green-b), var(--glow-g); cursor:default; z-index:1;
+  }
   .chip.taken .chead b{color:var(--green-t)}
   .chip.taken .cnum{color:var(--green-t)}
+  .chip.taken .cbody{color:var(--ink)}
+  /* flip_condition tooltip on the taken chip: hover or keyboard focus reveals it */
+  .chip .tip{
+    display:none; position:absolute; bottom:calc(100% + 8px); left:-1px; z-index:30;
+    width:max-content; max-width:320px; text-align:left; font-weight:400;
+    background:#10141b; border:1px solid var(--line2); border-left:3px solid var(--green);
+    border-radius:var(--r2); padding:8px 10px;
+    font-size:12px; line-height:1.45; color:var(--muted);
+    box-shadow:0 4px 18px rgba(0,0,0,.5), var(--glow-g);
+  }
+  .chip:hover .tip, .chip:focus-visible .tip{display:block}
+  .chip .tip b{display:block; color:var(--green-t); font-size:10.5px; letter-spacing:.05em;
+    text-transform:uppercase; margin-bottom:3px; font-weight:650}
   .chip.correcting{border-color:var(--red-b); background:#170f10; box-shadow:var(--glow-r)}
   .whyrow{display:flex; gap:9px; align-items:baseline; margin:0 0 7px}
   .whyrow .lbl{margin:0; flex:none; padding-top:2px}

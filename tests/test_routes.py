@@ -17,8 +17,8 @@ import types
 import httpx
 import pytest
 
-# (path, methods sans HEAD, handler name, websocket) — exactly what the monolith
-# served, verified by the before/after probe evidence in the PR.
+# (path, methods sans HEAD, handler name, websocket) — the monolith's routes plus
+# additive post-split routes (ops probes, workstream A).
 ROUTE_MANIFEST = [
     ("/", {"GET"}, "index", False),
     ("/ask", {"POST"}, "ask", False),
@@ -28,7 +28,9 @@ ROUTE_MANIFEST = [
     ("/events", set(), "events", True),
     ("/exam/burst", {"POST"}, "exam_burst", False),
     ("/exam/history", {"GET"}, "exam_history", False),
+    ("/healthz", {"GET"}, "healthz", False),
     ("/improve", {"POST"}, "improve", False),
+    ("/readyz", {"GET"}, "readyz", False),
     ("/reflect", {"POST"}, "reflect", False),
     ("/stt", {"POST"}, "stt", False),
     ("/tick", {"POST"}, "tick", False),

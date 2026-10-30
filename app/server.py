@@ -13,7 +13,7 @@ from dotenv import load_dotenv
 from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
 
-from app.routers import api, exam, learning, llm, retrieval, vitals, voice
+from app.routers import api, exam, learning, llm, ops, retrieval, vitals, voice
 from app.routers.common import STATIC_DIR
 
 load_dotenv()
@@ -50,3 +50,4 @@ app.include_router(learning.router)
 app.include_router(exam.router)
 app.include_router(voice.router)
 app.include_router(vitals.router)
+app.include_router(ops.router)

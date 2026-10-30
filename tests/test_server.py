@@ -77,7 +77,7 @@ async def test_ask_missing_reflex_is_503(monkeypatch, client):
 
 
 async def test_correct_roundtrip(monkeypatch, client):
-    async def correct(question_id, to_role, confidence=1.0):
+    async def correct(question_id, to_role, confidence=1.0, actor=""):
         return {"question_id": question_id, "to_role": to_role, "ledger": 2}
 
     _stub(monkeypatch, "core.learn", correct=correct)

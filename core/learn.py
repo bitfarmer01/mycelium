@@ -212,14 +212,15 @@ async def record_answer(question_id: str, shape: str, taken_role: str, chunk_ids
     await _move_prior(shape, taken_role, CONFIG["prior_rate_uncorrected"], f"answered as {taken_role}")
 
 
-async def correct(question_id: str, to_role: str, confidence: float = 1.0) -> dict:
+async def correct(question_id: str, to_role: str, confidence: float = 1.0, actor: str = "") -> dict:
     _role_idx(to_role)
     conf = min(1.0, max(0.0, float(confidence)))
     qrow = _first(await db.q(f"SELECT * FROM {_ref(question_id)}"))
     shape = str(qrow.get("shape") or "factual")
     from_role = str(qrow.get("taken") or "")
     cause = f"correction {from_role}→{to_role}"
-    obs_id = await _observation(question_id, "correct", from_role=from_role, to_role=to_role, confidence=conf)
+    obs_id = await _observation(question_id, "correct", from_role=from_role, to_role=to_role,
+                                confidence=conf, actor=actor)
     before, after, prior_lid = await _move_prior(shape, to_role, correction_rate(conf), cause)
     chunk_ids = await _cited_chunks(question_id, qrow)
     lids, sources = await _apply_evidence(chunk_ids, CONFIG["beta_evidence_correct"], "correct", cause)
@@ -233,12 +234,58 @@ async def correct(question_id: str, to_role: str, confidence: float = 1.0) -> di
         source_ids=sources,
         kind="correct",
     )
+    # feature 38: an undoable record of the exact prior delta this correction applied
+    rows = await db.q("CREATE correction CONTENT $row", {"row": {
+        "question": question_id, "shape": shape, "to_role": to_role, "actor": actor,
+        "confidence": conf, "prior_before": before, "prior_after": after,
+        "prior_ledger": prior_lid, "ts": db.now()}})
+    correction_id = str(_first(rows).get("id", ""))
     return {
         "shape": shape, "from_role": from_role, "to_role": to_role,
         "prior_before": before, "prior_after": after,
         "ledger_ids": [prior_lid, *lids], "lesson_id": lesson_id,
         "observation_id": obs_id, "chunk_ids": chunk_ids,
+        "correction_id": correction_id, "actor": actor, "confidence": conf,
     }
+
+
+async def undo(correction_id: str, actor: str) -> dict:
+    """Revert the exact prior delta a correction applied; only its actor may call it (feature 38).
+
+    Undo is refused unless the prior is still exactly where the correction left it —
+    an inexact rewind of an EMA chain would silently erase later learning.
+    """
+    ref = _ref(correction_id)
+    row = _first(await db.q(f"SELECT * FROM {ref}"))
+    if not isinstance(row, dict) or not str(row.get("id") or "").startswith("correction:"):
+        raise LookupError(f"unknown correction {correction_id!r}")
+    if str(row.get("actor") or "") != str(actor):
+        raise PermissionError("only the actor of a correction may undo it")
+    if row.get("undone"):
+        raise ValueError(f"correction {row['id']} was already undone")
+    shape = str(row.get("shape") or "")
+    to_role = str(row.get("to_role") or "")
+    idx = _role_idx(to_role) if to_role else 0
+    current = await get_prior(shape)
+    restored = [float(x) for x in row.get("prior_before") or []]
+    applied = [float(x) for x in row.get("prior_after") or []]
+    if len(restored) != len(ROLES) or any(abs(c - a) > 1e-9 for c, a in zip(current, applied)):
+        raise ValueError("prior has moved since this correction; refusing an inexact undo")
+    await db.q(f"UPSERT {db.rid('question_shape', shape)} SET shape = $shape, prior = $prior",
+               {"shape": shape, "prior": restored})
+    lid = await write_ledger(LedgerRow(target=shape, target_kind="shape", type="prior",
+                                       delta=restored[idx] - current[idx], before=current[idx],
+                                       after=restored[idx], cause=f"undo {row['id']}"))
+    await db.q(f"UPDATE {ref} SET undone = $u", {"u": True})
+    return {"correction_id": str(row["id"]), "shape": shape,
+            "prior_before": current, "prior_after": restored, "ledger_id": lid}
+
+
+async def correction_count(shape: str) -> int:
+    """Cross-session attribution badge: the shape's ledger prior rows caused by corrections (feature 36)."""
+    rows = await db.q("SELECT cause FROM ledger WHERE target = $shape AND target_kind = 'shape' AND type = 'prior'",
+                      {"shape": shape})
+    return sum(1 for r in rows if isinstance(r, dict) and str(r.get("cause") or "").startswith("correction"))
 
 
 async def confirm(question_id: str) -> dict:

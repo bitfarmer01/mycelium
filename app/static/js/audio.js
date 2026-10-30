@@ -1,6 +1,7 @@
 import { $ } from "./dom.js";
 import { MOCK } from "./mode.js";
 import { isSilent, SILENT_CHANGE_EVENT } from "./silent.js";
+import { getVoicePrefs } from "./voiceprefstate.js";
 
 /* --------------------------------------------------------------------------- audio -- */
 var audioStateEl = $("#audioState");
@@ -19,6 +20,8 @@ function browserSpeak(text) {
     if (!window.speechSynthesis || !text) { setAudio("audio idle", ""); return; }
     speechSynthesis.cancel();
     var u = new SpeechSynthesisUtterance(String(text));
+    var p = getVoicePrefs(); /* feature 57: user volume/speed applies to the fallback too */
+    u.volume = p.volume; u.rate = p.speed;
     u.onend = function () { setAudio("audio idle", ""); setFallback(false); };
     speechSynthesis.speak(u);
     setAudio("browser voice (speechSynthesis)", "a");
@@ -42,6 +45,8 @@ function speak(text, audioUrl) {
   if (!src) { setAudio("audio idle", ""); return; }
   var a;
   try { a = new Audio(src); } catch (e) { browserSpeak(text); return; }
+  var prefs = getVoicePrefs(); /* feature 57: per-user volume/speed on every play */
+  a.volume = prefs.volume; a.playbackRate = prefs.speed;
   currentAudio = a;
   setAudio("playing", "g");
   setFallback(false); /* feature 58: ElevenLabs audio is working — fallback badge off */

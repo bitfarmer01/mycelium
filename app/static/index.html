@@ -145,6 +145,10 @@
   }
   .transcript textarea:focus-visible{outline:2px solid var(--blue); outline-offset:1px; border-color:var(--blue-b)}
   .transcriptactions{display:flex; gap:8px}
+  /* feature 57: per-user voice preference sliders inside a pill */
+  .voiceprefs{gap:6px; display:inline-flex; align-items:center}
+  .voiceprefs label{color:var(--dim)}
+  .voiceprefs input[type=range]{width:64px; accent-color:var(--blue); margin:0}
   .statusrow{min-height:20px; margin-top:8px}
   .status{font-size:12.5px; color:var(--muted)}
   .status.err{color:var(--red)} .status.ok{color:var(--green)} .status.busy{color:var(--amber)}
@@ -483,6 +487,10 @@
       <span class="pill mono a" id="voiceFallback" hidden title="ElevenLabs voice unavailable — speaking with the browser's built-in voice (speechSynthesis)">browser voice fallback</span>
       <label class="pill mono" for="silentMode" title="Skip all speech synthesis — captions only, zero TTS credit burn"><input type="checkbox" id="silentMode" role="switch" aria-label="Silent demo mode (captions only, no spoken audio)"> silent</label>
       <label class="pill mono" for="captionsMode" title="Always render the transcript beside spoken answers"><input type="checkbox" id="captionsMode" role="switch" aria-label="Caption-always mode (transcript beside every spoken answer)"> captions</label>
+      <span class="pill mono voiceprefs" title="Per-user voice preference — saved to the database and applied on your next session">
+        <label for="volPref">vol</label><input type="range" id="volPref" min="0" max="1" step="0.05" aria-label="Voice volume">
+        <label for="speedPref">speed</label><input type="range" id="speedPref" min="0.5" max="2" step="0.05" aria-label="Voice speed">
+      </span>
     </div>
     <div class="statusrow"><span class="status" id="status" role="status" aria-live="polite"></span></div>
 

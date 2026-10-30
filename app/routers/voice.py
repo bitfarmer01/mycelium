@@ -7,6 +7,7 @@ import logging
 
 from fastapi import APIRouter, File, HTTPException, UploadFile
 from fastapi.responses import Response, StreamingResponse
+from pydantic import BaseModel
 
 from app.routers.common import _mod
 
@@ -59,3 +60,34 @@ async def tts_stream(text: str, quality: str = "flash"):
             log.warning("tts stream failed: %s", type(e).__name__)
 
     return StreamingResponse(chunks(), media_type="audio/mpeg")
+
+
+class PrefsIn(BaseModel):
+    user: str
+    volume: float | None = None
+    speed: float | None = None
+
+
+@router.get("/voice/prefs")
+async def get_voice_prefs(user: str = "default"):
+    """Feature 57: per-user volume/speed stored in SurrealDB. Documented
+    defaults when the user has never saved a preference."""
+    prefs = _mod("prefs")
+    try:
+        return await prefs.get_prefs(user)
+    except prefs.PrefsError as e:
+        raise HTTPException(status_code=422, detail=str(e)) from e
+    except Exception as e:  # db down: prefs degrade, the rest of the API lives on
+        raise HTTPException(status_code=503, detail=f"db unavailable: {type(e).__name__}") from e
+
+
+@router.put("/voice/prefs")
+async def put_voice_prefs(body: PrefsIn):
+    """Feature 57: persist volume/speed. A field left out keeps its stored value."""
+    prefs = _mod("prefs")
+    try:
+        return await prefs.set_prefs(body.user, body.volume, body.speed)
+    except prefs.PrefsError as e:
+        raise HTTPException(status_code=422, detail=str(e)) from e
+    except Exception as e:
+        raise HTTPException(status_code=503, detail=f"db unavailable: {type(e).__name__}") from e

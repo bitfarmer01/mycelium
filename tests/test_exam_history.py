@@ -60,7 +60,7 @@ async def test_history_limit_keeps_most_recent(seeded_db, fake_db):
     from core import exam
 
     await exam.history(limit=1)
-    (cand_sql, cand_vars), (ledger_sql, _lv) = fake_db.calls
+    (cand_sql, _cand_vars), (_ledger_sql, _lv) = fake_db.calls
     assert "LIMIT 1" in cand_sql and "ORDER BY ts DESC" in cand_sql
 
 

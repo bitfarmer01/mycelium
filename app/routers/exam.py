@@ -28,3 +28,9 @@ async def improve():
 async def exam_history(limit: int = 100):
     """Persisted exam record (feature 41): candidates with fitness deltas and decisions, oldest first."""
     return await _run("exam", "history", limit)
+
+
+@router.post("/exam/burst")
+async def exam_burst():
+    """Cost-capped exam burst (feature 45): improve() under EXAM_BURST_MAX_CALLS; /improve stays unlimited."""
+    return await _run("exam", "improve_burst")

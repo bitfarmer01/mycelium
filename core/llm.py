@@ -1,13 +1,19 @@
 """The single model gateway: shells out to `claude --print`, validates JSON against a schema, retries, rate-limits per bucket, logs usage."""
 from __future__ import annotations
 
+import asyncio
 import json
+import logging
 import os
 import re
 import subprocess
 import threading
 import time
 from collections import deque
+from collections.abc import Sequence
+from concurrent.futures import ThreadPoolExecutor
+from dataclasses import dataclass
+from functools import partial
 from pathlib import Path
 
 import jsonschema
@@ -17,6 +23,7 @@ BUCKET_LIMITS = {"growth": (10, 60.0)}  # name -> (max calls, per seconds); unli
 _bucket_hist: dict[str, deque] = {}
 _lock = threading.Lock()
 _FENCE = re.compile(r"```json\s*(.*?)```", re.S)
+log = logging.getLogger(__name__)
 
 
 class LLMError(Exception):
@@ -68,15 +75,18 @@ def _throttle(bucket: str) -> None:
     if not lim:
         return
     n, per = lim
-    with _lock:
-        hist = _bucket_hist.setdefault(bucket, deque())
-        now = time.monotonic()
-        while hist and now - hist[0] >= per:
-            hist.popleft()
-        if len(hist) >= n:
-            time.sleep(max(0.0, per - (now - hist[0])))
-            hist.popleft()
-        hist.append(time.monotonic())
+    while True:
+        with _lock:
+            hist = _bucket_hist.setdefault(bucket, deque())
+            now = time.monotonic()
+            while hist and now - hist[0] >= per:
+                hist.popleft()
+            if len(hist) < n:
+                hist.append(time.monotonic())
+                return
+            wait = max(0.0, per - (now - hist[0]))
+        # sleep outside the lock: a full bucket must never stall calls in other buckets
+        time.sleep(wait)
 
 
 def _log(bucket: str, ms: int, usage, ok: bool) -> None:
@@ -120,18 +130,12 @@ def _check(proc: subprocess.CompletedProcess) -> None:
         raise LLMError(f"claude error: {str(env.get('result'))[:300]}")
 
 
-def call_json(system: str, user: str, schema: dict, *, timeout_s: float = 60, bucket: str = "voice",
-              retries: int = 2, env: dict | None = None) -> dict:
-    use_flag = True
+def _schema_retry_loop(run_once, user: str, schema: dict, retries: int) -> dict:
+    """Shared validation loop: run → check → parse → validate; on a schema miss, re-prompt with the error."""
     prompt = user
     last: Exception | None = None
     for _ in range(retries + 1):
-        sys_p = system if use_flag else f"{system}\n\nRespond with only a JSON object matching this JSON Schema:\n{json.dumps(schema)}"
-        proc = _run(cli_args(sys_p, schema if use_flag else None), prompt, timeout_s, bucket, env)
-        if use_flag and proc.returncode != 0 and "unknown option" in (proc.stderr + proc.stdout).lower():
-            use_flag = False
-            sys_p = f"{system}\n\nRespond with only a JSON object matching this JSON Schema:\n{json.dumps(schema)}"
-            proc = _run(cli_args(sys_p, None), prompt, timeout_s, bucket, env)
+        proc = run_once(prompt)
         _check(proc)
         try:
             out = parse_result(proc.stdout)
@@ -145,6 +149,23 @@ def call_json(system: str, user: str, schema: dict, *, timeout_s: float = 60, bu
     raise LLMError(f"schema validation failed after {retries + 1} attempts: {last}")
 
 
+def _cold_run_schema(system: str, schema: dict, user: str, *, timeout_s: float, bucket: str, env: dict | None):
+    """One cold CLI attempt; older CLIs that reject --json-schema get one immediate retry with the schema in prose."""
+    proc = _run(cli_args(system, schema), user, timeout_s, bucket, env)
+    if proc.returncode != 0 and "unknown option" in (proc.stderr + proc.stdout).lower():
+        sys_p = f"{system}\n\nRespond with only a JSON object matching this JSON Schema:\n{json.dumps(schema)}"
+        return _run(cli_args(sys_p, None), user, timeout_s, bucket, env)
+    return proc
+
+
+def call_json(system: str, user: str, schema: dict, *, timeout_s: float = 60, bucket: str = "voice",
+              retries: int = 2, env: dict | None = None) -> dict:
+    def run_once(prompt: str):
+        return _cold_run_schema(system, schema, prompt, timeout_s=timeout_s, bucket=bucket, env=env)
+
+    return _schema_retry_loop(run_once, user, schema, retries)
+
+
 def call_text(system: str, user: str, *, timeout_s: float = 60, bucket: str = "voice", env: dict | None = None) -> str:
     proc = _run(cli_args(system, None), user, timeout_s, bucket, env)
     _check(proc)
@@ -152,3 +173,51 @@ def call_text(system: str, user: str, *, timeout_s: float = 60, bucket: str = "v
         return str(json.loads(proc.stdout).get("result", "")).strip()
     except (json.JSONDecodeError, AttributeError) as e:
         raise LLMError(f"CLI stdout is not JSON: {e}") from e
+
+
+# ---------------------------------------------------------------------------------------------------- concurrent batch (feature 21)
+@dataclass(frozen=True)
+class JsonJob:
+    """One independent model call for call_json_concurrent."""
+
+    system: str
+    user: str
+    schema: dict
+    timeout_s: float = 60.0
+    bucket: str = "voice"
+
+
+_executor: ThreadPoolExecutor | None = None
+_executor_lock = threading.Lock()
+
+
+def _env_int(name: str, default: int) -> int:
+    try:
+        return int(os.environ.get(name, "") or default)
+    except ValueError:
+        log.warning("bad %s, using %s", name, default)
+        return default
+
+
+def _shared_executor() -> ThreadPoolExecutor:
+    global _executor
+    with _executor_lock:
+        if _executor is None:
+            _executor = ThreadPoolExecutor(max_workers=_env_int("MYCELIUM_MAX_MODEL_CALLS", 4),
+                                           thread_name_prefix="llm-call")
+        return _executor
+
+
+async def call_json_concurrent(jobs: Sequence[JsonJob], *, return_exceptions: bool = False) -> list:
+    """Run independent model calls concurrently; results in input order, full call_json semantics per job.
+
+    Overlaps readings/synthesis-class calls on the wall clock — total time approaches the slowest call,
+    not the sum. Each job keeps schema validation, retries, bucket throttling and usage logging. With
+    return_exceptions=True, failed jobs surface as exception objects in their slot instead of failing
+    the whole batch (one bad exam pack must not kill a scored set).
+    """
+    loop = asyncio.get_running_loop()
+    futs = [loop.run_in_executor(_shared_executor(), partial(call_json, j.system, j.user, j.schema,
+                                                             timeout_s=j.timeout_s, bucket=j.bucket))
+            for j in jobs]
+    return list(await asyncio.gather(*futs, return_exceptions=return_exceptions))

@@ -482,6 +482,7 @@
       <span class="pill mono" id="audioState" title="speech output">audio idle</span>
       <span class="pill mono a" id="voiceFallback" hidden title="ElevenLabs voice unavailable — speaking with the browser's built-in voice (speechSynthesis)">browser voice fallback</span>
       <label class="pill mono" for="silentMode" title="Skip all speech synthesis — captions only, zero TTS credit burn"><input type="checkbox" id="silentMode" role="switch" aria-label="Silent demo mode (captions only, no spoken audio)"> silent</label>
+      <label class="pill mono" for="captionsMode" title="Always render the transcript beside spoken answers"><input type="checkbox" id="captionsMode" role="switch" aria-label="Caption-always mode (transcript beside every spoken answer)"> captions</label>
     </div>
     <div class="statusrow"><span class="status" id="status" role="status" aria-live="polite"></span></div>
 
@@ -500,7 +501,7 @@
         <span class="pill mono" id="msBadge"></span>
         <button class="btn tiny" id="replayBtn" type="button">Replay</button>
       </div>
-      <div class="spokenblock"><span class="lbl">spoken</span><p class="spoken" id="spoken"></p></div>
+      <div class="spokenblock" id="spokenBlock"><span class="lbl">spoken</span><p class="spoken" id="spoken"></p></div>
       <div class="screenblock"><span class="lbl">on screen</span><div class="screen" id="screen"></div></div>
       <div class="chunk" id="chunkCard" hidden></div>
       <div class="chips" id="chips" role="group" aria-label="Readings"></div>

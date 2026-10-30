@@ -63,6 +63,7 @@ import { connectWS, teardown } from "./ws.js";
 import { runAudit } from "./audit.js";
 import "./theme.js"; /* side-effect module: applies the persisted theme, wires the toggle */
 import "./ask.js"; /* side-effect module: wires the #sendBtn / Enter-key ask listeners */
+import "./captions.js"; /* side-effect module: wires the #captionsMode toggle (feature 56) */
 import "./talk.js"; /* side-effect module: wires the #talkBtn hold-to-talk listeners (feature 54) */
 
 newSession();

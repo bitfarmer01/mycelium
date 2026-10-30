@@ -5,21 +5,16 @@ import asyncio
 import hashlib
 import importlib
 import json
-import logging
 import os
 from pathlib import Path
 
-from app.routers import api, exam, learning, llm, retrieval
-from app.routers.common import STATIC_DIR, _mod, _run
+from app.routers import api, exam, learning, llm, retrieval, voice
+from app.routers.common import STATIC_DIR
 from dotenv import load_dotenv
-from fastapi import FastAPI, File, HTTPException, UploadFile
-from fastapi.responses import Response
+from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel
 
 load_dotenv()
-
-log = logging.getLogger("mycelium.server")
 
 ROOT = Path(__file__).resolve().parents[1]
 BASELINE_PATH = ROOT / "data" / "baseline_runs.json"
@@ -32,29 +27,7 @@ app.include_router(retrieval.router)
 app.include_router(llm.router)
 app.include_router(learning.router)
 app.include_router(exam.router)
-
-
-@app.post("/stt")
-async def stt(audio: UploadFile = File(...)):
-    voice = _mod("voice")
-    data = await audio.read()
-    try:
-        text = await asyncio.to_thread(voice.stt, data, audio.content_type or "audio/webm")
-    except Exception as e:
-        log.warning("stt failed: %s", type(e).__name__)
-        raise HTTPException(status_code=502, detail="speech-to-text unavailable")
-    return {"text": text}
-
-
-@app.get("/tts")
-async def tts(text: str):
-    try:
-        voice = importlib.import_module("core.voice")
-        audio = await asyncio.to_thread(voice.tts, text)
-    except Exception as e:
-        log.warning("tts failed: %s", type(e).__name__)
-        raise HTTPException(status_code=502, detail="text-to-speech unavailable")
-    return Response(content=audio, media_type="audio/mpeg")
+app.include_router(voice.router)
 
 
 def _slot_info() -> tuple[str | None, str | None]:

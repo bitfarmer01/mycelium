@@ -12,3 +12,4 @@ data/baseline.log
 data/server.log
 data/smoke.log
 data/baseline_runs.invalid.json
+data/embed_cache.npz

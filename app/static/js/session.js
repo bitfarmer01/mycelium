@@ -5,7 +5,7 @@ import { stopAudio } from "./audio.js";
 /* ------------------------------------------------------------------------- session -- */
 var state = {
   sessionId: null, ask: null, prior: null, lastSpoken: "", lastAudioUrl: null,
-  vitals: null, config: null, lastCounts: null,
+  vitals: null, config: null, lastCounts: null, vitalsLoaded: false,
   candidates: {}, wsTries: 0, prevSlot: null
 };
 function newSessionId() {

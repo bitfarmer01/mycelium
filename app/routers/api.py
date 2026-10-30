@@ -8,6 +8,7 @@ import logging
 from fastapi import APIRouter, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse, HTMLResponse
 
+from app import metrics
 from app.routers.common import STATIC_DIR, _jsonable
 
 log = logging.getLogger(__name__)
@@ -86,7 +87,23 @@ async def events(ws: WebSocket):
             if table == "ledger":
                 await poll_ledger()
 
-    tasks = [asyncio.create_task(relay("ledger")), asyncio.create_task(relay("candidate"))]
+    async def broadcast_metrics():
+        """Feature 64: push a vitals metrics snapshot every few seconds so the
+        panel's p50/p95 and error rate move live. In-process only — no DB hit."""
+        while True:
+            await asyncio.sleep(5)
+            try:
+                await send(metrics.vitals_feed_msg())
+            except (WebSocketDisconnect, RuntimeError):
+                raise
+            except Exception as e:  # noqa: BLE001 — feed push must never kill the stream
+                log.warning("metrics broadcast failed: %s", type(e).__name__)
+
+    tasks = [
+        asyncio.create_task(relay("ledger")),
+        asyncio.create_task(relay("candidate")),
+        asyncio.create_task(broadcast_metrics()),
+    ]
 
     async def watch_disconnect():
         try:

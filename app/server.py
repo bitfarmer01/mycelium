@@ -13,6 +13,7 @@ from dotenv import load_dotenv
 from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
 
+from app import metrics
 from app.middleware import RequestContextMiddleware
 from app.routers import api, exam, learning, llm, ops, retrieval, vitals, voice
 from app.routers.common import STATIC_DIR
@@ -61,6 +62,8 @@ app = FastAPI(
     lifespan=lifespan,
 )
 app.add_middleware(RequestContextMiddleware)
+# Feature 64: one latency/error sample per request feeds the vitals panel.
+app.add_middleware(metrics.MetricsMiddleware)
 app.mount("/static", StaticFiles(directory=str(STATIC_DIR), check_dir=False), name="static")
 
 # Feature 10: tags are attached here, at include time, so each segment's router

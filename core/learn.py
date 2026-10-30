@@ -199,6 +199,12 @@ async def _observation(question_id: str, kind: str, **extra) -> str:
 
 # ---------- public flows ----------
 
+def correction_rate(confidence: float) -> float:
+    """A correction's confidence in [0,1] scales the pinned correction rate; 1.0 is the unweighted behavior."""
+    c = min(1.0, max(0.0, float(confidence)))
+    return CONFIG["prior_rate_correct"] * c
+
+
 async def record_answer(question_id: str, shape: str, taken_role: str, chunk_ids: list[str]) -> None:
     qref = _ref(question_id)
     for cid in chunk_ids:
@@ -206,14 +212,15 @@ async def record_answer(question_id: str, shape: str, taken_role: str, chunk_ids
     await _move_prior(shape, taken_role, CONFIG["prior_rate_uncorrected"], f"answered as {taken_role}")
 
 
-async def correct(question_id: str, to_role: str) -> dict:
+async def correct(question_id: str, to_role: str, confidence: float = 1.0) -> dict:
     _role_idx(to_role)
+    conf = min(1.0, max(0.0, float(confidence)))
     qrow = _first(await db.q(f"SELECT * FROM {_ref(question_id)}"))
     shape = str(qrow.get("shape") or "factual")
     from_role = str(qrow.get("taken") or "")
     cause = f"correction {from_role}→{to_role}"
-    obs_id = await _observation(question_id, "correct", from_role=from_role, to_role=to_role)
-    before, after, prior_lid = await _move_prior(shape, to_role, CONFIG["prior_rate_correct"], cause)
+    obs_id = await _observation(question_id, "correct", from_role=from_role, to_role=to_role, confidence=conf)
+    before, after, prior_lid = await _move_prior(shape, to_role, correction_rate(conf), cause)
     chunk_ids = await _cited_chunks(question_id, qrow)
     lids, sources = await _apply_evidence(chunk_ids, CONFIG["beta_evidence_correct"], "correct", cause)
     await db.q(f"UPDATE {_ref(question_id)} SET corrected_to = $r", {"r": to_role})

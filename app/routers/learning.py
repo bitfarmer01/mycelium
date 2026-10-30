@@ -13,6 +13,7 @@ router = APIRouter()
 class CorrectIn(BaseModel):
     question_id: str
     to_role: str
+    confidence: float = 1.0
 
 
 class ConfirmIn(BaseModel):
@@ -23,7 +24,7 @@ class ConfirmIn(BaseModel):
 async def correct(body: CorrectIn):
     if body.to_role not in ROLES:
         raise HTTPException(status_code=422, detail=f"to_role must be one of {list(ROLES)}")
-    return await _run("learn", "correct", body.question_id, body.to_role)
+    return await _run("learn", "correct", body.question_id, body.to_role, body.confidence)
 
 
 @router.post("/confirm")

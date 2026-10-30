@@ -78,7 +78,7 @@ def probed_client(monkeypatch):
     async def ask(text, session_id):
         return {"spoken": "ok", "question_id": "question:x"}
 
-    async def correct(question_id, to_role):
+    async def correct(question_id, to_role, confidence=1.0):
         return {"ok": True}
 
     async def confirm(question_id):

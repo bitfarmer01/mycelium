@@ -21,6 +21,15 @@ class ConfirmIn(BaseModel):
     question_id: str
 
 
+@router.post("/learning/preview")
+async def preview(body: CorrectIn):
+    """Prior-delta preview before submit: identical math to /correct, zero writes (feature 35)."""
+    try:
+        return await _run("learn", "preview_correction", body.question_id, body.to_role, body.confidence)
+    except ValueError as e:
+        raise HTTPException(status_code=422, detail=str(e)) from e
+
+
 @router.post("/correct")
 async def correct(body: CorrectIn):
     if body.to_role not in ROLES:

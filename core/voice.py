@@ -18,6 +18,25 @@ TIMEOUT = 30.0
 
 _voice_id: str | None = None
 
+# Feature 59: pronunciation lexicon. Product names TTS mangles get phonetic
+# replacements applied before any synthesis call (and before the cache key,
+# so cached audio is always lexicon-correct).
+LEXICON = {
+    "Mycelium": "my-SEE-lee-um",
+    "SurrealDB": "SURREAL dee bee",
+}
+_LEXICON_RE = re.compile(
+    r"\b(" + "|".join(re.escape(k) for k in LEXICON) + r")\b", re.IGNORECASE
+)
+_LEXICON_LOWER = {k.lower(): v for k, v in LEXICON.items()}
+
+
+def apply_lexicon(text: str) -> str:
+    """Feature 59: replace lexiconed product names with phonetic spellings.
+    Idempotent — replacements never re-match the lexicon."""
+    return _LEXICON_RE.sub(lambda m: _LEXICON_LOWER[m.group(0).lower()], text)
+
+
 # Feature 52: TTS cache keyed by (quality, voice, text). One spoken string costs
 # one API call for the life of the process — the demo budget is ~370 spoken answers.
 _tts_cache: dict[str, bytes] = {}
@@ -88,17 +107,19 @@ def resolve_quality(quality: str | None) -> str:
 def tts(text: str, quality: str | None = None) -> bytes:
     """Text to mp3 bytes. Cached by (quality, voice, text): a repeated spoken
     string never re-hits the API (feature 52). `quality` accepts a selector
-    name (flash | v3) or a raw model id (feature 55)."""
-    if not text or not text.strip():
+    name (flash | v3) or a raw model id (feature 55). The pronunciation
+    lexicon is applied before synthesis and before the cache key (feature 59)."""
+    spoken = apply_lexicon(text)
+    if not spoken or not spoken.strip():
         raise VoiceError("empty text")
     q = resolve_quality(quality)
     with httpx.Client(timeout=TIMEOUT) as client:
         vid = _voice(client)
-    key = _tts_cache_key(text, vid, q)
+    key = _tts_cache_key(spoken, vid, q)
     cached = _tts_cache.get(key)
     if cached is not None:
         return cached
-    audio = _tts_request(text, vid, q)
+    audio = _tts_request(spoken, vid, q)
     _tts_cache[key] = audio
     return audio
 
@@ -118,7 +139,7 @@ def tts_stream(text: str, quality: str | None = None) -> Iterator[bytes]:
     cache, so streaming and full-answer synthesis never double-spend."""
     if not text or not text.strip():
         raise VoiceError("empty text")
-    for sentence in _split_sentences(text):
+    for sentence in _split_sentences(apply_lexicon(text)):
         yield tts(sentence, quality=quality)
 
 

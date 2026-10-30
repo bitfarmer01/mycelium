@@ -98,6 +98,12 @@ def probed_client(monkeypatch):
     def stt(data, content_type):
         return "hello"
 
+    class SttUploadError(ValueError):  # matches core.voice's interface
+        status_code = 415
+
+    def validate_stt_upload(data, content_type=None, filename=None):
+        return content_type or "audio/webm"
+
     def tts(text, quality=None):
         return b"audio"
 
@@ -108,7 +114,7 @@ def probed_client(monkeypatch):
     _stub(monkeypatch, "core.learn", correct=correct, confirm=confirm, decay_tick=decay_tick)
     _stub(monkeypatch, "core.reflect", reflect=reflect)
     _stub(monkeypatch, "core.growth", improve=improve, slot_version=lambda: "v1", load_slot=lambda: "s", slot_hash=lambda t: "h")
-    _stub(monkeypatch, "core.voice", stt=stt, tts=tts, tts_stream=tts_stream)
+    _stub(monkeypatch, "core.voice", stt=stt, SttUploadError=SttUploadError, validate_stt_upload=validate_stt_upload, tts=tts, tts_stream=tts_stream)
 
     from app.server import app
 

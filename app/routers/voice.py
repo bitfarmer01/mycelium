@@ -19,8 +19,14 @@ router = APIRouter()
 async def stt(audio: UploadFile = File(...)):
     voice = _mod("voice")
     data = await audio.read()
+    # Feature 53: refuse bad uploads (413/415) before any transcription spend.
     try:
-        text = await asyncio.to_thread(voice.stt, data, audio.content_type or "audio/webm")
+        mime = voice.validate_stt_upload(data, audio.content_type, audio.filename)
+    except voice.SttUploadError as e:
+        log.warning("stt upload rejected (HTTP %s): %s", e.status_code, e)
+        raise HTTPException(status_code=e.status_code, detail=str(e))
+    try:
+        text = await asyncio.to_thread(voice.stt, data, mime)
     except Exception as e:
         log.warning("stt failed: %s", type(e).__name__)
         raise HTTPException(status_code=502, detail="speech-to-text unavailable")

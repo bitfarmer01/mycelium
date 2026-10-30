@@ -22,3 +22,9 @@ async def reflect():
 @router.post("/improve")
 async def improve():
     return await _run("growth", "improve")
+
+
+@router.get("/exam/history")
+async def exam_history(limit: int = 100):
+    """Persisted exam record (feature 41): candidates with fitness deltas and decisions, oldest first."""
+    return await _run("exam", "history", limit)

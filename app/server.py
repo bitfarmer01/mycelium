@@ -7,10 +7,9 @@ import importlib
 import json
 import logging
 import os
-import uuid
 from pathlib import Path
 
-from app.routers import api, retrieval
+from app.routers import api, llm, retrieval
 from app.routers.common import STATIC_DIR, _audio_url, _mod, _run
 from core.contracts import ROLES
 from dotenv import load_dotenv
@@ -31,11 +30,7 @@ app = FastAPI(title="Mycelium")
 app.mount("/static", StaticFiles(directory=str(STATIC_DIR), check_dir=False), name="static")
 app.include_router(api.router)
 app.include_router(retrieval.router)
-
-
-class AskIn(BaseModel):
-    text: str
-    session_id: str | None = None
+app.include_router(llm.router)
 
 
 class CorrectIn(BaseModel):
@@ -45,16 +40,6 @@ class CorrectIn(BaseModel):
 
 class ConfirmIn(BaseModel):
     question_id: str
-
-
-@app.post("/ask")
-async def ask(body: AskIn):
-    sid = body.session_id or str(uuid.uuid4())
-    out = await _run("reflex", "ask", body.text, sid)
-    if isinstance(out, dict):
-        out.setdefault("session_id", sid)
-        out["audio_url"] = _audio_url(out.get("spoken"))
-    return out
 
 
 @app.post("/correct")

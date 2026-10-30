@@ -31,6 +31,7 @@ ROUTE_MANIFEST = [
     ("/stt", {"POST"}, "stt", False),
     ("/tick", {"POST"}, "tick", False),
     ("/tts", {"GET"}, "tts", False),
+    ("/tts/stream", {"GET"}, "tts_stream", False),
     ("/upload", {"POST"}, "upload", False),
     ("/vitals", {"GET"}, "vitals", False),
 ]
@@ -93,14 +94,17 @@ def probed_client(monkeypatch):
     def stt(data, content_type):
         return "hello"
 
-    def tts(text):
+    def tts(text, quality=None):
         return b"audio"
+
+    def tts_stream(text, quality=None):
+        return iter([b"audio"])
 
     _stub(monkeypatch, "core.reflex", ask=ask)
     _stub(monkeypatch, "core.learn", correct=correct, confirm=confirm, decay_tick=decay_tick)
     _stub(monkeypatch, "core.reflect", reflect=reflect)
     _stub(monkeypatch, "core.growth", improve=improve, slot_version=lambda: "v1", load_slot=lambda: "s", slot_hash=lambda t: "h")
-    _stub(monkeypatch, "core.voice", stt=stt, tts=tts)
+    _stub(monkeypatch, "core.voice", stt=stt, tts=tts, tts_stream=tts_stream)
 
     from app.server import app
 
@@ -119,7 +123,10 @@ PROBES = [
     ("POST /improve", "post", "/improve", {"json": {}}, 200),
     ("POST /stt", "post", "/stt", {"files": {"audio": ("a.webm", b"x", "audio/webm")}}, 200),
     ("GET /tts", "get", "/tts", {"params": {"text": "hi"}}, 200),
+    ("GET /tts quality selector", "get", "/tts", {"params": {"text": "hi", "quality": "v3"}}, 200),
     ("GET /tts missing param", "get", "/tts", None, 422),
+    ("GET /tts/stream", "get", "/tts/stream", {"params": {"text": "hi"}}, 200),
+    ("GET /tts/stream missing param", "get", "/tts/stream", None, 422),
     ("GET /vitals", "get", "/vitals", None, 200),
     ("GET /config", "get", "/config", None, 200),
     ("POST /upload no files", "post", "/upload", None, 422),

@@ -3,6 +3,7 @@ import { jpost } from "./api.js";
 import { setStatus } from "./status.js";
 import { scheduleVitals } from "./vitals.js";
 import { speak } from "./audio.js";
+import { showReflectSkeleton, clearReflectSkeleton } from "./skeletons.js";
 
 /* ------------------------------------------------------------------------- reflect -- */
 function renderReflect(res) {
@@ -35,13 +36,14 @@ function renderLesson(row) {
 }
 async function reflect() {
   setStatus("reflecting… (may take ~30 s)", "busy");
+  showReflectSkeleton();  /* feature 68: sentence skeletons while the model reads the day */
   try {
     var res = await jpost("/reflect", {});
     renderReflect(res);
     var n = (res.sentences || []).length;
     setStatus(n + " sentence" + (n === 1 ? "" : "s") + " · rows read " + (res.rows_read == null ? "—" : res.rows_read) + " · dropped " + (res.dropped == null ? "0" : res.dropped), "ok");
     scheduleVitals();
-  } catch (e) { setStatus("reflect failed: " + e.message, "err"); }
+  } catch (e) { clearReflectSkeleton(); setStatus("reflect failed: " + e.message, "err"); }
 }
 
 $("#reflectBtn").addEventListener("click", reflect);

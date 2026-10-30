@@ -8,7 +8,7 @@ import re
 import time
 from typing import Any
 
-from core.contracts import CONFIG, READINGS_SCHEMA, ROLES, SYNTHESIS_SCHEMA
+from core.contracts import CONFIG, READINGS_SCHEMA, ROLES, SYNTHESIS_SCHEMA, LedgerRow
 
 READINGS_SYSTEM = (
     "Return three readings of the question with fixed roles literal, intent, scope; probabilities sum to 1; "
@@ -69,13 +69,13 @@ def _literal_only(text: str, shape: str) -> dict:
     }
 
 
-async def readings(text: str) -> dict:
+async def readings(text: str, usage: dict | None = None, session: str | None = None) -> dict:
     from core import llm
 
     err = _llm_error()
     shape_guess = classify_shape(text)
     try:
-        out = await _call(llm.call_json, READINGS_SYSTEM, text, READINGS_SCHEMA)
+        out = await _call(llm.call_json, READINGS_SYSTEM, text, READINGS_SCHEMA, usage=usage, session=session)
     except err:
         return _literal_only(text, shape_guess)
     if not isinstance(out, dict):
@@ -200,13 +200,14 @@ def _titles_from_context(context: str) -> str:
     return "\n".join(titles)
 
 
-async def synthesize(text: str, context: str, slot_text: str) -> dict:
+async def synthesize(text: str, context: str, slot_text: str, usage: dict | None = None,
+                     session: str | None = None) -> dict:
     from core import growth, llm
 
     err = _llm_error()
     system = growth.render_prompt(slot_text, context, text)  # render_prompt already appends CONTRACT
     try:
-        out = await _call(llm.call_json, system, text, SYNTHESIS_SCHEMA)
+        out = await _call(llm.call_json, system, text, SYNTHESIS_SCHEMA, usage=usage, session=session)
         if not isinstance(out, dict):
             raise TypeError("synthesis was not an object")
     except (err, TypeError):
@@ -227,7 +228,8 @@ async def ask(text: str, session_id: str) -> dict:
     from core import db, growth, learn, retrieve
 
     t0 = time.perf_counter()
-    r = await readings(text)
+    usage: dict = {}  # token accounting across every model attempt in this answer (feature 23)
+    r = await readings(text, usage=usage, session=session_id)
     shape = r["shape"]
     try:
         prior = list(await _call(learn.get_prior, shape))
@@ -239,7 +241,7 @@ async def ask(text: str, session_id: str) -> dict:
     context, citations, _rows = await _call(retrieve.retrieve, query, k=CONFIG["knn_k"])
     citations = list(citations or [])
     slot = growth.load_slot()
-    synth = await synthesize(text, context, slot)
+    synth = await synthesize(text, context, slot, usage=usage, session=session_id)
     synth, resolved, total = strip_unresolved(synth, len(citations))
     spoken = spoken_tier(synth, taken)
 
@@ -274,6 +276,17 @@ async def ask(text: str, session_id: str) -> dict:
         import logging
         logging.getLogger("mycelium.reflex").warning("record_answer failed: %s", type(e).__name__)
 
+    try:
+        if usage:  # empty only when every model call was a session-cache hit: no tokens, no row
+            tokens = int(usage.get("input_tokens", 0)) + int(usage.get("output_tokens", 0))
+            await learn.write_ledger(LedgerRow(
+                target=question_id or "ask", target_kind="question", type="usage",
+                delta=float(tokens), before=0.0, after=float(tokens),
+                cause=f"{usage.get('attempts', 0)} model calls"))
+    except Exception as e:  # noqa: BLE001  # non-fatal: the answer stands even if usage accounting fails
+        import logging
+        logging.getLogger("mycelium.reflex").warning("usage ledger write failed: %s", type(e).__name__)
+
     return {
         "question_id": question_id,
         "session_id": session_id,
@@ -291,6 +304,8 @@ async def ask(text: str, session_id: str) -> dict:
         "confidence": synth.get("confidence", "low"),
         "citations": [c.to_dict() for c in citations],
         "citations_resolved": f"{resolved}/{total}",
+        "cached": bool(synth.get("cached")),
+        "usage": dict(usage),
         "prior": prior,
         "entropy_bits": entropy,
         "slot_version": growth.slot_version(),

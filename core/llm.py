@@ -4,6 +4,12 @@ Transport-level speed features: `call_json_concurrent` runs independent calls on
 opt-in ModelDaemon (MYCELIUM_MODEL_DAEMON=1) serves calls from pre-warmed CLI processes so they stop
 waiting on per-call startup. Every daemon failure falls back to the cold `claude --print` path with the
 same semantics.
+
+Reliability features: token accounting (`call_json`/`call_text` fold the CLI envelope's usage into a
+caller-supplied dict, summed across attempts), an in-process session response cache (repeat questions
+in a session return the cached answer marked `cached: true` with no model call), and per-bucket timeout
+tiers (`bucket_timeout`: follow-up questions get a short timeout, reflection a long one, both
+configurable via env).
 """
 from __future__ import annotations
 
@@ -123,10 +129,7 @@ def _run(args: list[str], user: str, timeout_s: float, bucket: str, env: dict | 
     try:
         proc = subprocess.run(args, check=False, input=user, capture_output=True, text=True, timeout=timeout_s, env=env or os.environ)
         ok = proc.returncode == 0
-        try:
-            usage = json.loads(proc.stdout).get("usage")
-        except (json.JSONDecodeError, AttributeError):
-            pass
+        usage = _usage_from_proc(proc)
         return proc
     except subprocess.TimeoutExpired as e:
         raise LLMError(f"claude timed out after {timeout_s}s") from e
@@ -147,12 +150,99 @@ def _check(proc: subprocess.CompletedProcess) -> None:
         raise LLMError(f"claude error: {str(env.get('result'))[:300]}")
 
 
-def _schema_retry_loop(run_once, user: str, schema: dict, retries: int) -> dict:
+# ---------------------------------------------------------------------------------------------------- reliability primitives (features 23, 25, 26)
+def _env_float(name: str, default: float) -> float:
+    try:
+        return float(os.environ.get(name, "") or default)
+    except ValueError:
+        log.warning("bad %s, using %s", name, default)
+        return default
+
+
+def _usage_from_proc(proc: subprocess.CompletedProcess) -> dict | None:
+    """The usage object from a CLI JSON envelope, or None when the envelope carries none."""
+    try:
+        usage = json.loads(proc.stdout).get("usage")
+    except (json.JSONDecodeError, AttributeError):
+        return None
+    return usage if isinstance(usage, dict) else None
+
+
+def _merge_usage(out: dict | None, attempt_usage: dict | None) -> None:
+    """Fold one attempt's CLI usage into the caller's accounting dict; tokens sum across attempts."""
+    if out is None:
+        return
+    if isinstance(attempt_usage, dict):
+        for k, v in attempt_usage.items():
+            if isinstance(v, (int, float)):
+                out[k] = out.get(k, 0) + v
+    out["attempts"] = out.get("attempts", 0) + 1
+
+
+BUCKET_TIMEOUTS = {"follow_up": 20.0, "reflect": 120.0, "voice": 60.0, "growth": 300.0}
+
+
+def bucket_timeout(bucket: str) -> float:
+    """Default timeout in seconds for a bucket tier: follow-up questions get a short timeout, reflection a
+    long one. MYCELIUM_TIMEOUT_<BUCKET>_S overrides any tier; unknown buckets fall back to 60s."""
+    return _env_float(f"MYCELIUM_TIMEOUT_{(bucket or '').upper()}_S", BUCKET_TIMEOUTS.get(bucket, 60.0))
+
+
+SESSION_CACHE_MAX = 256  # bounded: one entry per distinct question text per session
+_session_cache: dict[tuple[str, str, str, str], tuple[float, dict]] = {}
+_session_cache_lock = threading.Lock()
+
+
+def session_cache_enabled() -> bool:
+    """On by default for callers that pass a session; MYCELIUM_SESSION_CACHE=0 turns it off."""
+    raw = os.environ.get("MYCELIUM_SESSION_CACHE")
+    return True if raw is None else raw.strip().lower() not in ("0", "off", "false", "no")
+
+
+def _cache_key(session: str, system: str, schema: dict | None, user: str) -> tuple[str, str, str, str]:
+    s = json.dumps(schema, sort_keys=True) if schema else "-"
+    return (str(session), system, s, user)
+
+
+def session_cache_get(session: str | None, system: str, schema: dict | None, user: str) -> dict | None:
+    """The cached answer for this exact call within the session, marked cached: true; None on any miss."""
+    if not session or not session_cache_enabled():
+        return None
+    key = _cache_key(session, system, schema, user)
+    with _session_cache_lock:
+        row = _session_cache.get(key)
+    if row is None:
+        return None
+    ts, val = row
+    if time.monotonic() - ts >= _env_float("MYCELIUM_SESSION_CACHE_TTL_S", 900.0):
+        with _session_cache_lock:
+            _session_cache.pop(key, None)
+        return None
+    return dict(val, cached=True)
+
+
+def session_cache_put(session: str | None, system: str, schema: dict | None, user: str, result: dict) -> None:
+    if not session or not session_cache_enabled():
+        return
+    with _session_cache_lock:
+        if len(_session_cache) >= SESSION_CACHE_MAX:
+            _session_cache.pop(min(_session_cache, key=lambda k: _session_cache[k][0]))
+        _session_cache[_cache_key(session, system, schema, user)] = (time.monotonic(), dict(result))
+
+
+def reset_session_cache() -> None:
+    """Drop every cached answer — ops/test hook."""
+    with _session_cache_lock:
+        _session_cache.clear()
+
+
+def _schema_retry_loop(run_once, user: str, schema: dict, retries: int, usage: dict | None = None) -> dict:
     """Shared validation loop: run → check → parse → validate; on a schema miss, re-prompt with the error."""
     prompt = user
     last: Exception | None = None
     for _ in range(retries + 1):
         proc = run_once(prompt)
+        _merge_usage(usage, _usage_from_proc(proc))  # count every attempt, even ones that then fail validation
         _check(proc)
         try:
             out = parse_result(proc.stdout)
@@ -175,36 +265,57 @@ def _cold_run_schema(system: str, schema: dict, user: str, *, timeout_s: float, 
     return proc
 
 
-def call_json(system: str, user: str, schema: dict, *, timeout_s: float = 60, bucket: str = "voice",
-              retries: int = 2, env: dict | None = None) -> dict:
+def call_json(system: str, user: str, schema: dict, *, timeout_s: float | None = None, bucket: str = "voice",
+              retries: int = 2, env: dict | None = None, usage: dict | None = None,
+              session: str | None = None) -> dict:
+    """One schema-validated model call.
+
+    usage: optional accounting dict — the CLI envelope's usage fields (summed across every attempt,
+    including failed ones) plus an attempts counter, so callers can land tokens in the answer and the ledger.
+    session: opt-in cache scope — an identical (system, user, schema) call in the same session returns the
+    cached answer marked cached: true without any model call (feature 25).
+    timeout_s: explicit value wins; otherwise the bucket's timeout tier applies (feature 26).
+    """
+    t_s = timeout_s if timeout_s is not None else bucket_timeout(bucket)
+    hit = session_cache_get(session, system, schema, user)
+    if hit is not None:
+        return hit
+    result = None
     if env is None and daemon_enabled():
         try:
-            return _schema_retry_loop(
-                lambda prompt: _daemon().run(system, schema, prompt, timeout_s=timeout_s, bucket=bucket),
-                user, schema, retries)
+            result = _schema_retry_loop(
+                lambda prompt: _daemon().run(system, schema, prompt, timeout_s=t_s, bucket=bucket),
+                user, schema, retries, usage)
         except DaemonUnavailable as e:
             log.debug("daemon not serving this call, using cold CLI: %s", e)
         except LLMError as e:
             log.warning("daemon call failed, using cold CLI: %s", e)
 
-    def run_once(prompt: str):
-        return _cold_run_schema(system, schema, prompt, timeout_s=timeout_s, bucket=bucket, env=env)
+    if result is None:
+        def run_once(prompt: str):
+            return _cold_run_schema(system, schema, prompt, timeout_s=t_s, bucket=bucket, env=env)
 
-    return _schema_retry_loop(run_once, user, schema, retries)
+        result = _schema_retry_loop(run_once, user, schema, retries, usage)
+    session_cache_put(session, system, schema, user, result)
+    return result
 
 
-def call_text(system: str, user: str, *, timeout_s: float = 60, bucket: str = "voice", env: dict | None = None) -> str:
+def call_text(system: str, user: str, *, timeout_s: float | None = None, bucket: str = "voice",
+              env: dict | None = None, usage: dict | None = None) -> str:
+    t_s = timeout_s if timeout_s is not None else bucket_timeout(bucket)
     if env is None and daemon_enabled():
         try:
-            proc = _daemon().run(system, None, user, timeout_s=timeout_s, bucket=bucket)
+            proc = _daemon().run(system, None, user, timeout_s=t_s, bucket=bucket)
             _check(proc)
+            _merge_usage(usage, _usage_from_proc(proc))
             return str(json.loads(proc.stdout).get("result", "")).strip()
         except DaemonUnavailable as e:
             log.debug("daemon not serving this call, using cold CLI: %s", e)
         except (LLMError, json.JSONDecodeError, AttributeError) as e:
             log.warning("daemon call failed, using cold CLI: %s", e)
-    proc = _run(cli_args(system, None), user, timeout_s, bucket, env)
+    proc = _run(cli_args(system, None), user, t_s, bucket, env)
     _check(proc)
+    _merge_usage(usage, _usage_from_proc(proc))
     try:
         return str(json.loads(proc.stdout).get("result", "")).strip()
     except (json.JSONDecodeError, AttributeError) as e:
@@ -219,7 +330,7 @@ class JsonJob:
     system: str
     user: str
     schema: dict
-    timeout_s: float = 60.0
+    timeout_s: float | None = None  # None defers to the bucket's timeout tier
     bucket: str = "voice"
 
 
@@ -266,14 +377,6 @@ DAEMON_ENV = "MYCELIUM_MODEL_DAEMON"
 def daemon_enabled() -> bool:
     """Warm model path is opt-in: MYCELIUM_MODEL_DAEMON=1 routes host CLI calls through pre-warmed processes."""
     return os.environ.get(DAEMON_ENV, "").strip().lower() in ("1", "on", "true", "yes")
-
-
-def _env_float(name: str, default: float) -> float:
-    try:
-        return float(os.environ.get(name, "") or default)
-    except ValueError:
-        log.warning("bad %s, using %s", name, default)
-        return default
 
 
 @dataclass

@@ -169,6 +169,41 @@
   .pipestep.done{color:var(--green-t); border-color:var(--green-b)}
   .pipestep.done .sd{background:var(--green)}
 
+  /* feature 68: skeleton loaders — shimmer bars shaped like the content they replace */
+  .skelbox{margin-top:12px}
+  .skelwrap{border:1px solid var(--line); border-radius:var(--r2); padding:12px; background:#0b0e13}
+  .skelrow{display:flex; gap:8px; flex-wrap:wrap; margin:0 0 9px}
+  .skelrow:last-child{margin-bottom:0}
+  .skelbar{
+    display:block; height:12px; border-radius:6px;
+    background:linear-gradient(90deg,var(--s2) 25%,var(--s3) 45%,var(--s2) 65%);
+    background-size:220% 100%; animation:skel 1.15s ease-in-out infinite;
+  }
+  .skelpill{height:20px; width:84px; border-radius:999px}
+  .skelrid .skelbar{height:10px}
+  .skelchip{
+    display:flex; flex-direction:column; gap:6px; flex:1 1 168px; min-width:0;
+    border:1px solid var(--line2); border-radius:var(--r2); padding:9px 10px; background:#0b0e13;
+  }
+  .skelsentence{background:none; border:none; padding:0}
+  @keyframes skel{from{background-position:120% 0} to{background-position:-80% 0}}
+
+  /* feature 69: answer timeline — one row per pipeline stage, timings from the server */
+  .timeline{
+    display:flex; flex-direction:column; gap:6px; margin-top:12px;
+    border:1px solid var(--line2); border-radius:var(--r2); padding:10px 12px; background:#0b0e13;
+  }
+  .tlhead{font-size:10.5px; text-transform:uppercase; letter-spacing:.1em; color:var(--dim); margin-bottom:2px}
+  .tlstep{display:flex; align-items:center; gap:8px; font-size:12.5px; color:var(--dim)}
+  .tlstep .dot{width:7px; height:7px; border-radius:50%; background:var(--line3); flex:none}
+  .tlstep .tlname{text-transform:none}
+  .tlstep .tms{margin-left:auto; font-family:var(--mono); font-size:11px; color:var(--muted)}
+  .tlstep.live{color:var(--amber-t)} .tlstep.live .dot{background:var(--amber)}
+  .tlstep.done{color:var(--ink)} .tlstep.done .dot{background:var(--green)}
+  .tlstep.total{border-top:1px solid var(--line); padding-top:6px; margin-top:2px}
+  .tlstep.total .tlname{color:var(--muted)}
+  .tlstep.failed{color:var(--red-t)} .tlstep.failed .dot{background:var(--red)}
+
   .answer{margin-top:12px; border-top:1px solid var(--line); padding-top:12px}
   .metabar{display:flex; gap:7px; flex-wrap:wrap; align-items:center; margin-bottom:11px}
   .lbl{display:inline-block; font-size:10.5px; text-transform:uppercase; letter-spacing:.1em; color:var(--dim); margin-bottom:3px}
@@ -447,6 +482,23 @@
     .vcell .v{font-size:15px}
     body{font-size:14px}
   }
+  /* feature 70: phone pass — 390px is the demo target. Ask stacks, chips go
+     full-width (thumb-sized targets), the tagline leaves the header. */
+  @media (max-width:420px){
+    header.top{padding:8px 10px; gap:7px}
+    .tagline{display:none}
+    main.layout{padding:8px; gap:9px}
+    .askbar{flex-direction:column; align-items:stretch}
+    .askbar input{flex:1 1 auto}
+    .askbar .btn{flex:1 1 0}
+    .actions .btn{flex:1 1 auto; justify-content:center}
+    .chip{flex-basis:100%}
+    .skelchip{flex-basis:100%}
+    .metabar{gap:5px}
+    .whyrow{gap:7px}
+    .pbar{grid-template-columns:44px 1fr 48px; gap:7px}
+    .answeract .btn{flex:1 1 auto; justify-content:center}
+  }
 </style>
 </head>
 <body>
@@ -499,6 +551,9 @@
       <div class="pipeq" id="pipeQuestion"></div>
       <div class="pipeflow" id="pipeFlow"></div>
     </div>
+
+    <div class="skelbox" id="skeleton" role="status" aria-live="polite" aria-label="Loading" hidden></div>
+    <div class="timeline" id="timeline" hidden></div>
 
     <div class="answer" id="answer" hidden>
       <div class="metabar">

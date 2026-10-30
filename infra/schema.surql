@@ -15,6 +15,10 @@ DEFINE TABLE IF NOT EXISTS candidate SCHEMALESS;
 DEFINE TABLE IF NOT EXISTS lesson SCHEMALESS;
 DEFINE TABLE IF NOT EXISTS correction SCHEMALESS;
 DEFINE TABLE IF NOT EXISTS config SCHEMALESS;
+-- compaction aggregates (feature 37): written by ledger compaction, read by
+-- attribution and the priors snapshot — must exist on fresh installs so
+-- /learning/priors answers before the first compaction has ever run.
+DEFINE TABLE IF NOT EXISTS ledger_agg SCHEMALESS;
 
 -- chunk defaults
 DEFINE FIELD IF NOT EXISTS alpha ON chunk DEFAULT 1;

@@ -84,6 +84,11 @@
   .btn:active{transform:translateY(1px)}
   .btn:focus-visible{outline:2px solid var(--blue); outline-offset:2px}
   .btn:disabled{opacity:.5; cursor:not-allowed}
+  /* feature 65: universal focus ring — zero-specificity fallback so every interactive
+     element shows a visible ring even without its own :focus-visible rule */
+  :where(button, a, input, select, textarea, summary, [tabindex], [role="button"]):focus-visible{
+    outline:2px solid var(--blue); outline-offset:2px; border-radius:4px;
+  }
   .btn.sm{padding:6px 10px; font-size:12.5px; border-radius:9px}
   .btn.tiny{padding:3px 8px; font-size:11.5px; border-radius:8px}
   .btn.ghost{background:transparent}

@@ -1,8 +1,10 @@
 """Retrieval: bge-large query embedding, SurrealDB KNN (numpy fallback), fitness rerank, numbered context."""
 from __future__ import annotations
 
+import hashlib
 import logging
 import threading
+from pathlib import Path
 
 import numpy as np
 
@@ -27,6 +29,58 @@ def _get_model():
 
                 _model = SentenceTransformer(MODEL_NAME)
     return _model
+
+
+def content_hash(text: str, model: str = MODEL_NAME) -> str:
+    """Cache key for an embedding: sha1 of (model, text), so a changed model or text never hits a stale vector."""
+    return hashlib.sha1(f"{model}\n{text}".encode()).hexdigest()
+
+
+class EmbeddingCache:
+    """Content-hash -> embedding store persisted as one npz (hashes + matrix), loaded once, written atomically.
+
+    Derived data, never committed: safe to delete; a cold cache just re-encodes everything.
+    """
+
+    def __init__(self, path: Path):
+        self.path = Path(path)
+        self._lock = threading.Lock()
+        self._data: dict[str, np.ndarray] | None = None
+
+    def _load(self) -> dict[str, np.ndarray]:
+        with self._lock:
+            if self._data is None:
+                data: dict[str, np.ndarray] = {}
+                if self.path.exists():
+                    with np.load(self.path) as z:
+                        for h, vec in zip(z["hashes"].tolist(), z["matrix"]):
+                            data[str(h)] = np.asarray(vec, dtype=np.float32)
+                self._data = data
+            return self._data
+
+    def get_many(self, hashes: list[str]) -> dict[str, np.ndarray]:
+        """Subset of `hashes` present in the cache."""
+        data = self._load()
+        with self._lock:
+            return {h: data[h] for h in hashes if h in data}
+
+    def put(self, entries: dict[str, np.ndarray | list[float]]) -> None:
+        """Merge entries and persist atomically (write temp file, then rename)."""
+        if not entries:
+            return
+        with self._lock:
+            data = self._data or {}
+            data.update({h: np.asarray(v, dtype=np.float32) for h, v in entries.items()})
+            self.path.parent.mkdir(parents=True, exist_ok=True)
+            tmp = self.path.with_name(self.path.name + ".tmp")
+            keys = sorted(data)
+            with tmp.open("wb") as fh:
+                np.savez(fh, hashes=np.array(keys), matrix=np.stack([data[k] for k in keys]).astype(np.float32))
+            tmp.replace(self.path)
+            self._data = data
+
+    def __len__(self) -> int:
+        return len(self._load())
 
 
 def embed_query(text: str) -> list[float]:

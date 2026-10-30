@@ -26,6 +26,8 @@ ROUTE_MANIFEST = [
     ("/confirm", {"POST"}, "confirm", False),
     ("/correct", {"POST"}, "correct", False),
     ("/events", set(), "events", True),
+    ("/exam/burst", {"POST"}, "exam_burst", False),
+    ("/exam/history", {"GET"}, "exam_history", False),
     ("/improve", {"POST"}, "improve", False),
     ("/reflect", {"POST"}, "reflect", False),
     ("/stt", {"POST"}, "stt", False),

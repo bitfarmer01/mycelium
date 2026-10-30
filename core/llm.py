@@ -9,7 +9,10 @@ Reliability features: token accounting (`call_json`/`call_text` fold the CLI env
 caller-supplied dict, summed across attempts), an in-process session response cache (repeat questions
 in a session return the cached answer marked `cached: true` with no model call), and per-bucket timeout
 tiers (`bucket_timeout`: follow-up questions get a short timeout, reflection a long one, both
-configurable via env).
+configurable via env). Model routing (feature 27, opt-in via MYCELIUM_CHEAP_MODEL) sends readings to
+a cheap model while synthesis stays on Opus. PartialJSONStream renders a synthesis object
+incrementally as chunks arrive (feature 29), and CLIDown marks an unreachable CLI so the ask path can
+abstain gracefully (feature 30).
 """
 from __future__ import annotations
 
@@ -25,7 +28,7 @@ import subprocess
 import threading
 import time
 from collections import deque
-from collections.abc import Sequence
+from collections.abc import Iterable, Iterator, Sequence
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from functools import partial
@@ -43,6 +46,12 @@ log = logging.getLogger(__name__)
 
 class LLMError(Exception):
     pass
+
+
+class CLIDown(LLMError):
+    """The claude CLI could not be started at all (missing binary, exec failure) — the model service
+    is unreachable. Callers abstain instead of retrying; timeouts and bad output stay plain LLMError
+    with their usual fallbacks."""
 
 
 class DaemonUnavailable(LLMError):
@@ -134,7 +143,7 @@ def _run(args: list[str], user: str, timeout_s: float, bucket: str, env: dict | 
     except subprocess.TimeoutExpired as e:
         raise LLMError(f"claude timed out after {timeout_s}s") from e
     except OSError as e:
-        raise LLMError(f"claude failed to start: {e}") from e
+        raise CLIDown(f"claude failed to start: {e}") from e
     finally:
         _log(bucket, int((time.monotonic() - t0) * 1000), usage, ok)
 
@@ -189,7 +198,7 @@ def bucket_timeout(bucket: str) -> float:
 
 
 SESSION_CACHE_MAX = 256  # bounded: one entry per distinct question text per session
-_session_cache: dict[tuple[str, str, str, str], tuple[float, dict]] = {}
+_session_cache: dict[tuple[str, str, str, str, str | None], tuple[float, dict]] = {}
 _session_cache_lock = threading.Lock()
 
 
@@ -199,16 +208,18 @@ def session_cache_enabled() -> bool:
     return True if raw is None else raw.strip().lower() not in ("0", "off", "false", "no")
 
 
-def _cache_key(session: str, system: str, schema: dict | None, user: str) -> tuple[str, str, str, str]:
+def _cache_key(session: str, system: str, schema: dict | None, user: str,
+               role: str | None = None) -> tuple[str, str, str, str, str | None]:
     s = json.dumps(schema, sort_keys=True) if schema else "-"
-    return (str(session), system, s, user)
+    return (str(session), system, s, user, role)
 
 
-def session_cache_get(session: str | None, system: str, schema: dict | None, user: str) -> dict | None:
+def session_cache_get(session: str | None, system: str, schema: dict | None, user: str,
+                      role: str | None = None) -> dict | None:
     """The cached answer for this exact call within the session, marked cached: true; None on any miss."""
     if not session or not session_cache_enabled():
         return None
-    key = _cache_key(session, system, schema, user)
+    key = _cache_key(session, system, schema, user, role)
     with _session_cache_lock:
         row = _session_cache.get(key)
     if row is None:
@@ -221,13 +232,14 @@ def session_cache_get(session: str | None, system: str, schema: dict | None, use
     return dict(val, cached=True)
 
 
-def session_cache_put(session: str | None, system: str, schema: dict | None, user: str, result: dict) -> None:
+def session_cache_put(session: str | None, system: str, schema: dict | None, user: str, result: dict,
+                      role: str | None = None) -> None:
     if not session or not session_cache_enabled():
         return
     with _session_cache_lock:
         if len(_session_cache) >= SESSION_CACHE_MAX:
             _session_cache.pop(min(_session_cache, key=lambda k: _session_cache[k][0]))
-        _session_cache[_cache_key(session, system, schema, user)] = (time.monotonic(), dict(result))
+        _session_cache[_cache_key(session, system, schema, user, role)] = (time.monotonic(), dict(result))
 
 
 def reset_session_cache() -> None:
@@ -248,6 +260,8 @@ def _schema_retry_loop(run_once, user: str, schema: dict, retries: int, usage: d
             out = parse_result(proc.stdout)
             jsonschema.validate(out, schema)
             return out
+        except CLIDown:
+            raise  # a dead CLI cannot be re-prompted into correctness; fail fast to the abstain path
         except (jsonschema.ValidationError, LLMError) as e:
             last = e
             msg = e.message if isinstance(e, jsonschema.ValidationError) else str(e)
@@ -267,7 +281,7 @@ def _cold_run_schema(system: str, schema: dict, user: str, *, timeout_s: float, 
 
 def call_json(system: str, user: str, schema: dict, *, timeout_s: float | None = None, bucket: str = "voice",
               retries: int = 2, env: dict | None = None, usage: dict | None = None,
-              session: str | None = None) -> dict:
+              session: str | None = None, role: str | None = None) -> dict:
     """One schema-validated model call.
 
     usage: optional accounting dict — the CLI envelope's usage fields (summed across every attempt,
@@ -275,11 +289,15 @@ def call_json(system: str, user: str, schema: dict, *, timeout_s: float | None =
     session: opt-in cache scope — an identical (system, user, schema) call in the same session returns the
     cached answer marked cached: true without any model call (feature 25).
     timeout_s: explicit value wins; otherwise the bucket's timeout tier applies (feature 26).
+    role: model-routing tier (feature 27) — "readings" rides the cheap model and "synthesis" stays on
+    Opus when MYCELIUM_CHEAP_MODEL is set; unrouted roles and routing-off behave exactly as before.
     """
     t_s = timeout_s if timeout_s is not None else bucket_timeout(bucket)
-    hit = session_cache_get(session, system, schema, user)
+    hit = session_cache_get(session, system, schema, user, role=role)
     if hit is not None:
         return hit
+    if env is None:
+        env = route_env(role)
     result = None
     if env is None and daemon_enabled():
         try:
@@ -296,7 +314,7 @@ def call_json(system: str, user: str, schema: dict, *, timeout_s: float | None =
             return _cold_run_schema(system, schema, prompt, timeout_s=t_s, bucket=bucket, env=env)
 
         result = _schema_retry_loop(run_once, user, schema, retries, usage)
-    session_cache_put(session, system, schema, user, result)
+    session_cache_put(session, system, schema, user, result, role=role)
     return result
 
 
@@ -320,6 +338,160 @@ def call_text(system: str, user: str, *, timeout_s: float | None = None, bucket:
         return str(json.loads(proc.stdout).get("result", "")).strip()
     except (json.JSONDecodeError, AttributeError) as e:
         raise LLMError(f"CLI stdout is not JSON: {e}") from e
+
+
+# ---------------------------------------------------------------------------------------------------- model routing (feature 27)
+OPUS_MODEL_ID = "us.anthropic.claude-opus-4-5-20251101-v1:0"  # the synthesis tier; same id core.runner uses for Bedrock
+CHEAP_MODEL_ENV = "MYCELIUM_CHEAP_MODEL"  # set to a cheap model id to activate role routing
+
+
+def routing_enabled() -> bool:
+    """Role routing is opt-in: MYCELIUM_CHEAP_MODEL set (to any model id) turns it on; unset means today's behavior."""
+    return bool(os.environ.get(CHEAP_MODEL_ENV, "").strip())
+
+
+def cheap_model_id() -> str:
+    return os.environ.get(CHEAP_MODEL_ENV, "").strip()
+
+
+def route_env(role: str | None) -> dict | None:
+    """Subprocess env for a routed role: readings carry the cheap model, synthesis carries Opus.
+
+    Returns None when routing is off or the role is unrouted, so callers behave exactly as before.
+    A routed call always takes the cold CLI path: the warm daemon serves a (system, schema) key under
+    whatever env it spawned with, and a per-role model must not depend on daemon warmth. The env is a
+    full copy of os.environ with only ANTHROPIC_MODEL overridden — auth and region pass through.
+    """
+    if not role or not routing_enabled():
+        return None
+    if role == "readings":
+        model = cheap_model_id()
+    elif role == "synthesis":
+        model = OPUS_MODEL_ID
+    else:
+        return None
+    env = dict(os.environ)
+    env["ANTHROPIC_MODEL"] = model
+    return env
+
+
+# ---------------------------------------------------------------------------------------------------- streaming JSON parsing (feature 29)
+class PartialJSONStream:
+    """Incremental renderer for one JSON object arriving in chunks (synthesis over a token stream).
+
+    feed() scans what has arrived and returns the top-level string fields the new chunk completed
+    as (key, value) pairs — spoken/screen surface the moment their closing quote lands, while the
+    model is still writing the rest. Nested objects and arrays (claims, contradictions, gaps) are
+    tracked for structure but never emitted. finish() tolerates a truncated final chunk: an
+    in-flight top-level string value is emitted once with the text that arrived (best-effort
+    unescape, a dangling partial escape dropped) and nothing ever raises. Prose or a ```json fence
+    around the object is handled by opening at the first '{'. Duplicate keys keep their first
+    value; one object per stream.
+    """
+
+    def __init__(self) -> None:
+        self._buf = ""
+        self._pos = 0  # scan cursor into _buf: everything before it is fully consumed
+        self._depth = 0
+        self._in_str = False
+        self._esc = False
+        self._str_open_depth = 0
+        self._str_start = 0
+        self._pending_key: str | None = None
+        self._await_value = False
+        self._opened = False
+        self._done = False
+        self._emitted: set[str] = set()
+
+    def feed(self, chunk: str) -> list[tuple[str, str]]:
+        self._buf += chunk
+        return self._scan(final=False)
+
+    def finish(self) -> list[tuple[str, str]]:
+        return self._scan(final=True)
+
+    def _emit(self, key: str, value: str) -> list[tuple[str, str]]:
+        if key in self._emitted:
+            return []
+        self._emitted.add(key)
+        return [(key, value)]
+
+    def _scan(self, final: bool) -> list[tuple[str, str]]:
+        ev: list[tuple[str, str]] = []
+        buf, n = self._buf, len(self._buf)
+        i = self._pos
+        while i < n and not self._done:
+            ch = buf[i]
+            if self._in_str:
+                if self._esc:
+                    self._esc = False
+                elif ch == "\\":
+                    self._esc = True
+                elif ch == '"':
+                    self._in_str = False
+                    ev += self._on_str_end(buf[self._str_start + 1:i])
+                i += 1
+                continue
+            if ch == '"':
+                self._in_str = True
+                self._str_open_depth = self._depth
+                self._str_start = i
+            elif ch in "{[":
+                if self._depth == 0:
+                    self._opened = True
+                self._depth += 1
+            elif ch in "}]":
+                if self._depth > 0:
+                    self._depth -= 1
+                    if self._depth == 0 and self._opened:
+                        self._done = True  # object closed: the rest is trailing junk
+                self._await_value = False
+            elif ch == ":":
+                if self._pending_key is not None:
+                    self._await_value = True
+            elif ch == ",":
+                self._pending_key = None
+                self._await_value = False
+            # any other char outside a string — whitespace, fence markers, prose — is skipped
+            i += 1
+        if final and self._in_str and self._opened and self._str_open_depth == 1 \
+                and self._await_value and self._pending_key is not None:
+            # truncated mid-value: emit the partial text once instead of dropping it
+            key, self._pending_key, self._await_value, self._in_str = self._pending_key, None, False, False
+            ev += self._emit(key, self._unescape_tail(buf[self._str_start + 1:]))
+        self._pos = i
+        return ev
+
+    def _on_str_end(self, raw: str) -> list[tuple[str, str]]:
+        if not self._opened or self._str_open_depth != 1:
+            return []  # nested or pre-object string
+        if self._await_value and self._pending_key is not None:
+            key, self._pending_key, self._await_value = self._pending_key, None, False
+            return self._emit(key, self._unescape(raw))
+        self._pending_key = self._unescape(raw)  # a depth-1 string is a key until a colon proves otherwise
+        self._await_value = False
+        return []
+
+    @staticmethod
+    def _unescape(raw: str) -> str:
+        try:
+            val = json.loads(f'"{raw}"')
+        except (json.JSONDecodeError, ValueError):
+            return raw  # tolerate raw control chars and the like; the text is still worth showing
+        return val if isinstance(val, str) else raw
+
+    @staticmethod
+    def _unescape_tail(raw: str) -> str:
+        cleaned = re.sub(r"\\(u[0-9a-fA-F]{0,3})?$", "", raw)  # drop a dangling partial escape
+        return PartialJSONStream._unescape(cleaned)
+
+
+def stream_json_fields(chunks: Iterable[str]) -> Iterator[tuple[str, str]]:
+    """Feed a chunk stream through one PartialJSONStream; (key, value) events as fields complete."""
+    stream = PartialJSONStream()
+    for chunk in chunks:
+        yield from stream.feed(chunk)
+    yield from stream.finish()
 
 
 # ---------------------------------------------------------------------------------------------------- concurrent batch (feature 21)

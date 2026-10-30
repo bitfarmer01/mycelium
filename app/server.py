@@ -16,31 +16,38 @@ from fastapi.staticfiles import StaticFiles
 from app.middleware import RequestContextMiddleware
 from app.routers import api, exam, learning, llm, ops, retrieval, vitals, voice
 from app.routers.common import STATIC_DIR
+from app.shutdown import DEFAULT_DRAIN_TIMEOUT_S, PendingTasks
+
+log = logging.getLogger(__name__)
 
 load_dotenv()
 
-<<<<<<< HEAD
-log = logging.getLogger("mycelium.server")
-
 
 @contextlib.asynccontextmanager
-async def lifespan(_app):
-    task = None
+async def lifespan(app: FastAPI):
+    # Feature 6: shutdown drains in-flight requests and background writes so
+    # SIGTERM mid-write leaves zero uncommitted ledger events.
+    app.state.pending = PendingTasks()
+    scheduler_task = None
     try:
         from core.exam import ExamScheduler, scheduler_loop
 
         scheduler = ExamScheduler()  # interval from EXAM_INTERVAL_MINUTES; 0 = off
         if scheduler.interval > 0:
-            task = asyncio.create_task(scheduler_loop(scheduler))
+            scheduler_task = app.state.pending.spawn(scheduler_loop(scheduler))
             log.info("scheduled exam bursts every %s min", scheduler.interval)
     except Exception as e:  # noqa: BLE001  the API must boot even if the exam module is broken
         log.warning("exam scheduler unavailable: %s", type(e).__name__)
     try:
         yield
     finally:
-        if task is not None:
-            task.cancel()
-            await asyncio.gather(task, return_exceptions=True)
+        # Cancel the scheduler first: it is an endless loop, not a write to drain.
+        if scheduler_task is not None:
+            scheduler_task.cancel()
+            await asyncio.gather(scheduler_task, return_exceptions=True)
+        leftover = await app.state.pending.drain(timeout=DEFAULT_DRAIN_TIMEOUT_S)
+        if leftover == 0:
+            log.info("shutdown drain complete: all in-flight work committed")
 
 
 app = FastAPI(title="Mycelium", lifespan=lifespan)

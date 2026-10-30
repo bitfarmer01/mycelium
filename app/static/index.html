@@ -137,6 +137,14 @@
   .askbar input{flex:1 1 240px}
   .askbar .btn{flex:0 0 auto}
   .actions{display:flex; gap:8px; flex-wrap:wrap; align-items:center; margin-top:10px}
+  /* feature 54: editable transcript preview between record and ask */
+  .transcript{margin-top:10px; display:flex; flex-direction:column; gap:6px; padding:9px 11px; border:1px solid var(--blue-b); border-radius:10px; background:var(--panel2, transparent)}
+  .transcript textarea{
+    font:inherit; color:var(--text, inherit); background:transparent; resize:vertical;
+    padding:6px 8px; border:1px solid var(--line, #444); border-radius:6px; min-height:44px;
+  }
+  .transcript textarea:focus-visible{outline:2px solid var(--blue); outline-offset:1px; border-color:var(--blue-b)}
+  .transcriptactions{display:flex; gap:8px}
   .statusrow{min-height:20px; margin-top:8px}
   .status{font-size:12.5px; color:var(--muted)}
   .status.err{color:var(--red)} .status.ok{color:var(--green)} .status.busy{color:var(--amber)}
@@ -457,6 +465,14 @@
       <input id="q" type="text" placeholder="Ask the wiki — e.g. how do we run a discovery call?" autocomplete="off" spellcheck="false" aria-label="Question">
       <button class="btn primary" id="sendBtn" type="button">Send</button>
       <button class="btn talk" id="talkBtn" type="button" aria-pressed="false" title="Hold to talk">Hold to talk</button>
+    </div>
+    <div class="transcript" id="transcriptBox" hidden>
+      <label class="lbl" for="transcriptEdit">transcript preview — edit before sending</label>
+      <textarea id="transcriptEdit" rows="2" aria-label="Editable speech transcript"></textarea>
+      <div class="transcriptactions">
+        <button class="btn sm primary" id="transcriptSend" type="button">Send</button>
+        <button class="btn sm ghost" id="transcriptDiscard" type="button">Discard</button>
+      </div>
     </div>
     <div class="actions">
       <button class="btn sm" id="reflectBtn" type="button">What did you learn today?</button>

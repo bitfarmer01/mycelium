@@ -2,8 +2,47 @@ import { $, glow } from "./dom.js";
 import { MOCK } from "./mode.js";
 import { jpostForm } from "./api.js";
 import { setStatus } from "./status.js";
+import { ask } from "./ask.js";
 
 var qInput = $("#q"); /* shared with ask.js — transcripts land in the ask input */
+
+/* ---------------------------------------------------------------- transcript preview -- */
+/* Feature 54: on release, the transcript lands in an EDITABLE preview instead of
+   going straight into the ask input — the speaker corrects a mis-heard word before
+   anything is asked. Send submits the edited text; Discard drops it. */
+var transcriptBox = $("#transcriptBox");
+var transcriptEdit = $("#transcriptEdit");
+var transcriptSend, transcriptDiscard;
+
+function showPreview(text) {
+  text = String(text == null ? "" : text).trim();
+  if (!text) { setStatus("no speech detected", "err"); return; }
+  if (!transcriptBox || !transcriptEdit) { applyTranscript(text); return; } /* no preview in DOM: old behavior */
+  transcriptEdit.value = text;
+  transcriptBox.hidden = false;
+  setStatus("transcript ready — edit it below, then Send or Discard", "ok");
+  transcriptEdit.focus();
+  glow(transcriptBox, "b");
+}
+function hidePreview() {
+  if (!transcriptBox || !transcriptEdit) return;
+  transcriptBox.hidden = true;
+  transcriptEdit.value = "";
+}
+if (transcriptBox && transcriptEdit) {
+  transcriptSend = $("#transcriptSend"); transcriptDiscard = $("#transcriptDiscard");
+  if (transcriptSend) transcriptSend.addEventListener("click", function () {
+    var text = transcriptEdit.value.trim();
+    if (!text) { setStatus("nothing to send — hold to talk first", "err"); return; }
+    hidePreview();
+    qInput.value = text; /* edited transcript IS the question */
+    ask();
+  });
+  if (transcriptDiscard) transcriptDiscard.addEventListener("click", function () {
+    hidePreview();
+    setStatus("transcript discarded", "ok");
+  });
+}
 
 /* ---------------------------------------------------------------------- hold to talk -- */
 var talkBtn = $("#talkBtn");
@@ -44,7 +83,7 @@ function talkDown(ev) {
 }
 function talkUp() {
   talkBtn.classList.remove("rec"); talkBtn.textContent = "Hold to talk"; talkBtn.setAttribute("aria-pressed", "false");
-  if (MOCK && recActive) { recActive = false; applyTranscript("how do we run a discovery call?"); return; }
+  if (MOCK && recActive) { recActive = false; showPreview("how do we run a discovery call?"); return; }
   if (rec && rec.state === "recording") { try { rec.stop(); } catch (e) {} }
   recActive = false;
 }
@@ -53,7 +92,7 @@ async function stt(blob) {
   try {
     var fd = new FormData(); fd.append("audio", blob, "audio.webm");
     var data = await jpostForm("/stt", fd);
-    applyTranscript(data && data.text);
+    showPreview(data && data.text);
   } catch (e) { setStatus("transcription failed: " + e.message, "err"); }
 }
 

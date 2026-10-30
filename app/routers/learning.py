@@ -72,3 +72,26 @@ async def undo(body: UndoIn):
         raise HTTPException(status_code=404, detail=str(e)) from e
     except ValueError as e:
         raise HTTPException(status_code=409, detail=str(e)) from e
+
+
+@router.get("/learning/export")
+async def export_state():
+    """Full learning state as JSON for backup/restore (feature 34)."""
+    try:
+        return await _run("learn", "export_state")
+    except Exception as e:
+        raise HTTPException(status_code=503, detail=f"db unavailable: {type(e).__name__}") from e
+
+
+class ImportIn(BaseModel):
+    state: dict
+    wipe: bool = True
+
+
+@router.post("/learning/import")
+async def import_state(body: ImportIn):
+    """Restore a learning-state export (feature 34)."""
+    try:
+        return await _run("learn", "import_state", body.state, body.wipe)
+    except Exception as e:
+        raise HTTPException(status_code=422, detail=f"import failed: {type(e).__name__}") from e

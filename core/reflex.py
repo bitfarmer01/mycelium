@@ -40,6 +40,16 @@ def _llm_error() -> type[BaseException]:
         return Exception
 
 
+def _is_cli_down(e: BaseException) -> bool:
+    """True for CLIDown: the model CLI is unreachable — the ask path abstains instead of falling back."""
+    try:
+        from core import llm
+
+        return isinstance(e, getattr(llm, "CLIDown", ()))
+    except Exception:  # noqa: BLE001  mirror _llm_error: classify even when the llm import breaks
+        return False
+
+
 async def _call(fn, *args, **kwargs):
     """Call a sibling function that may be sync or async; sync calls run off the event loop."""
     if inspect.iscoroutinefunction(fn):
@@ -77,7 +87,9 @@ async def readings(text: str, usage: dict | None = None, session: str | None = N
     try:
         out = await _call(llm.call_json, READINGS_SYSTEM, text, READINGS_SCHEMA, usage=usage, session=session,
                           role="readings")
-    except err:
+    except err as e:
+        if _is_cli_down(e):
+            raise  # the CLI is down: abstain, don't fall back to a literal reading
         return _literal_only(text, shape_guess)
     if not isinstance(out, dict):
         return _literal_only(text, shape_guess)
@@ -212,7 +224,9 @@ async def synthesize(text: str, context: str, slot_text: str, usage: dict | None
                           role="synthesis")
         if not isinstance(out, dict):
             raise TypeError("synthesis was not an object")
-    except (err, TypeError):
+    except (err, TypeError) as e:
+        if _is_cli_down(e):
+            raise  # the CLI is down: abstain, don't serve a fallback answer
         return {
             "spoken": FALLBACK_SPOKEN,
             "screen": _titles_from_context(context),
@@ -226,24 +240,70 @@ async def synthesize(text: str, context: str, slot_text: str, usage: dict | None
     return out
 
 
+ABSTAIN_SPOKEN = "I can't answer right now: the model service is unreachable. Please try again in a moment."
+
+
+async def _abstain(text: str, session_id: str, err: BaseException) -> dict:
+    """Feature 30: graceful abstain when the model CLI is down — an answer the console can speak
+    (HTTP 200) plus a ledger record of the failure. A broken DB never breaks the abstain answer."""
+    from core import db, learn
+
+    shape = classify_shape(text)
+    answer: dict = {
+        "session_id": session_id,
+        "shape": shape,
+        "spoken": ABSTAIN_SPOKEN,
+        "screen": "",
+        "claims": [],
+        "contradictions": [],
+        "gaps": [],
+        "confidence": "low",
+        "citations": [],
+        "citations_resolved": "0/0",
+        "abstained": True,
+        "abstain_reason": "cli_unreachable",
+        "cached": False,
+        "usage": {},
+    }
+    try:
+        row = {"text": text, "shape": shape, "session_id": session_id, "split": "demo",
+               "ts": db.now(), "created_at": db.now()}
+        created = await db.q("CREATE question CONTENT $row", {"row": row})
+        qid = str(created[0]["id"]) if created and isinstance(created[0], dict) and created[0].get("id") else "ask"
+        answer["question_id"] = qid
+        await learn.write_ledger(LedgerRow(
+            target=qid, target_kind="question", type="abstain",
+            delta=0.0, before=0.0, after=0.0, cause=f"model CLI unreachable: {err}"))
+    except Exception as e:  # noqa: BLE001  non-fatal: the abstain answer stands even if the ledger write fails
+        import logging
+
+        logging.getLogger("mycelium.reflex").warning("abstain ledger write failed: %s", type(e).__name__)
+    return answer
+
+
 async def ask(text: str, session_id: str) -> dict:
     from core import db, growth, learn, retrieve
 
     t0 = time.perf_counter()
     usage: dict = {}  # token accounting across every model attempt in this answer (feature 23)
-    r = await readings(text, usage=usage, session=session_id)
-    shape = r["shape"]
     try:
-        prior = list(await _call(learn.get_prior, shape))
-    except Exception:
-        prior = [1.0 / len(ROLES)] * len(ROLES)
-    taken, posterior, entropy = select_reading(r["readings"], prior)
-    query = taken.get("query") or text
+        r = await readings(text, usage=usage, session=session_id)
+        shape = r["shape"]
+        try:
+            prior = list(await _call(learn.get_prior, shape))
+        except Exception:  # noqa: BLE001
+            prior = [1.0 / len(ROLES)] * len(ROLES)
+        taken, posterior, entropy = select_reading(r["readings"], prior)
+        query = taken.get("query") or text
 
-    context, citations, _rows = await _call(retrieve.retrieve, query, k=CONFIG["knn_k"])
-    citations = list(citations or [])
-    slot = growth.load_slot()
-    synth = await synthesize(text, context, slot, usage=usage, session=session_id)
+        context, citations, _rows = await _call(retrieve.retrieve, query, k=CONFIG["knn_k"])
+        citations = list(citations or [])
+        slot = growth.load_slot()
+        synth = await synthesize(text, context, slot, usage=usage, session=session_id)
+    except Exception as e:
+        if _is_cli_down(e):
+            return await _abstain(text, session_id, e)  # feature 30: graceful abstain, ledger record
+        raise  # every other failure keeps its existing semantics
     synth, resolved, total = strip_unresolved(synth, len(citations))
     spoken = spoken_tier(synth, taken)
 

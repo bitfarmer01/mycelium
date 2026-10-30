@@ -11,7 +11,8 @@ in a session return the cached answer marked `cached: true` with no model call),
 tiers (`bucket_timeout`: follow-up questions get a short timeout, reflection a long one, both
 configurable via env). Model routing (feature 27, opt-in via MYCELIUM_CHEAP_MODEL) sends readings to
 a cheap model while synthesis stays on Opus. PartialJSONStream renders a synthesis object
-incrementally as chunks arrive (feature 29).
+incrementally as chunks arrive (feature 29), and CLIDown marks an unreachable CLI so the ask path can
+abstain gracefully (feature 30).
 """
 from __future__ import annotations
 
@@ -45,6 +46,12 @@ log = logging.getLogger(__name__)
 
 class LLMError(Exception):
     pass
+
+
+class CLIDown(LLMError):
+    """The claude CLI could not be started at all (missing binary, exec failure) — the model service
+    is unreachable. Callers abstain instead of retrying; timeouts and bad output stay plain LLMError
+    with their usual fallbacks."""
 
 
 class DaemonUnavailable(LLMError):
@@ -136,7 +143,7 @@ def _run(args: list[str], user: str, timeout_s: float, bucket: str, env: dict | 
     except subprocess.TimeoutExpired as e:
         raise LLMError(f"claude timed out after {timeout_s}s") from e
     except OSError as e:
-        raise LLMError(f"claude failed to start: {e}") from e
+        raise CLIDown(f"claude failed to start: {e}") from e
     finally:
         _log(bucket, int((time.monotonic() - t0) * 1000), usage, ok)
 
@@ -253,6 +260,8 @@ def _schema_retry_loop(run_once, user: str, schema: dict, retries: int, usage: d
             out = parse_result(proc.stdout)
             jsonschema.validate(out, schema)
             return out
+        except CLIDown:
+            raise  # a dead CLI cannot be re-prompted into correctness; fail fast to the abstain path
         except (jsonschema.ValidationError, LLMError) as e:
             last = e
             msg = e.message if isinstance(e, jsonschema.ValidationError) else str(e)

@@ -1,0 +1,25 @@
+{
+  "corpus": {
+    "source": "synthetic",
+    "chunks": 300,
+    "dim": 64,
+    "queries": 10,
+    "k": 8
+  },
+  "numpy_baseline": {
+    "p95_ms": 0.3701007499671505,
+    "rounds": 2
+  },
+  "candidate_backend": "numpy-fallback",
+  "fallback_parity_recall": 1.0,
+  "fallback_p95_ms": 0.040026299996043235,
+  "decision": {
+    "adopt_hnsw": false,
+    "verdict": "KEEP-NUMPY",
+    "recall_vs_exact": 1.0,
+    "min_recall": 1.0,
+    "numpy_p95_ms": 0.3701007499671505,
+    "candidate_p95_ms": null
+  },
+  "notes": "SurrealDB unreachable in this environment: HNSW is unmeasured and the shipped NumPy fallback is retained. Re-run with SurrealDB up for a live ADOPT/KEEP verdict. Fallback parity vs exact baseline: recall 1.0 (must be 1.0)."
+}

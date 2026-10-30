@@ -127,7 +127,7 @@ def test_ask_pipeline_with_fakes(fake_llm, fake_db, monkeypatch):
     ]
     seen = {}
 
-    def fake_retrieve(text, k=8):
+    def fake_retrieve(text, k=8, reading=None):
         seen["query"] = text
         return "[1] Budget\n[2] Approvals", cites, []
 

@@ -15,7 +15,7 @@ from fastapi.staticfiles import StaticFiles
 
 from app import metrics
 from app.middleware import RequestContextMiddleware
-from app.routers import api, exam, learning, llm, ops, retrieval, vitals, voice
+from app.routers import api, exam, learning, llm, ops, retrieval, search, vitals, voice
 from app.routers.common import STATIC_DIR
 from app.shutdown import DEFAULT_DRAIN_TIMEOUT_S, PendingTasks
 
@@ -70,6 +70,7 @@ app.mount("/static", StaticFiles(directory=str(STATIC_DIR), check_dir=False), na
 # file stays untouched and the OpenAPI grouping lives in one A-owned place.
 app.include_router(api.router, tags=["console"])
 app.include_router(retrieval.router, tags=["retrieval"])
+app.include_router(search.router, tags=["retrieval"])
 app.include_router(llm.router, tags=["ask"])
 app.include_router(learning.router, tags=["learning"])
 app.include_router(exam.router, tags=["exam"])

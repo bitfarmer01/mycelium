@@ -104,7 +104,7 @@ def test_ask_lands_usage_in_answer_and_ledger(fake_llm, fake_db, monkeypatch):
     from core import learn
 
     monkeypatch.setattr(learn, "write_ledger", fake_write_ledger, raising=False)
-    monkeypatch.setattr("core.retrieve.retrieve", lambda text, k=8: ("", [], []), raising=False)
+    monkeypatch.setattr("core.retrieve.retrieve", lambda text, k=8, reading=None: ("", [], []), raising=False)
     monkeypatch.setattr("core.learn.get_prior", lambda shape: _prior(), raising=False)
     async def fake_record(*a, **k):
         return None

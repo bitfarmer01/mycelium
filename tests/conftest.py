@@ -40,6 +40,17 @@ class FakeLLM:
         return item
 
 
+@pytest.fixture(autouse=True)
+def _fresh_a3_state():
+    """Reset workstream-A per-test state (feature 5 limiter) so /ask probes in any
+    test file start with an empty rate-limit window."""
+    from app import rate_limit
+
+    rate_limit.limiter.reset()
+    yield
+    rate_limit.limiter.reset()
+
+
 @pytest.fixture
 def fake_llm(monkeypatch):
     import core.llm  # noqa: F401  (Task 2 module; the fixture needs it to exist)

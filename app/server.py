@@ -8,13 +8,15 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import logging
+import os
 
 from dotenv import load_dotenv
 from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
 from app import metrics
-from app.middleware import RequestContextMiddleware
+from app.middleware import BearerAuthMiddleware, RequestContextMiddleware
 from app.routers import api, exam, learning, llm, ops, retrieval, search, vitals, voice
 from app.routers.common import STATIC_DIR
 from app.shutdown import DEFAULT_DRAIN_TIMEOUT_S, PendingTasks
@@ -61,9 +63,14 @@ app = FastAPI(
     ),
     lifespan=lifespan,
 )
+# Feature 8: bearer auth is innermost so 401s still carry request IDs and feed
+# metrics; CORS is outermost so preflights authenticate at the browser, not the API.
+app.add_middleware(BearerAuthMiddleware)
 app.add_middleware(RequestContextMiddleware)
 # Feature 64: one latency/error sample per request feeds the vitals panel.
 app.add_middleware(metrics.MetricsMiddleware)
+_cors_origins = [o.strip() for o in os.environ.get("MYCELIUM_CORS_ORIGINS", "").split(",") if o.strip()]
+app.add_middleware(CORSMiddleware, allow_origins=_cors_origins, allow_methods=["*"], allow_headers=["*"])
 app.mount("/static", StaticFiles(directory=str(STATIC_DIR), check_dir=False), name="static")
 
 # Feature 10: tags are attached here, at include time, so each segment's router

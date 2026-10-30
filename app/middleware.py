@@ -9,14 +9,16 @@ from __future__ import annotations
 
 import asyncio
 import datetime as dt
+import hmac
 import json
 import logging
+import os
 import time
 import uuid
 
 from starlette.middleware.base import BaseHTTPMiddleware, RequestResponseEndpoint
 from starlette.requests import Request
-from starlette.responses import Response
+from starlette.responses import JSONResponse, Response
 
 log = logging.getLogger("mycelium.request")
 
@@ -102,3 +104,24 @@ async def _reinject_body(response: Response, request_id: str) -> Response:
         headers=headers,
         media_type=_JSON_BODY,
     )
+
+
+# Feature 8: with MYCELIUM_AUTH_TOKEN set, everything answers 401 to unauthenticated
+# callers except liveness. Unset (the default), behavior is exactly as before.
+AUTH_EXEMPT_PATHS = frozenset({"/healthz"})
+
+
+def _authorized(authorization: str | None, token: str) -> bool:
+    """Constant-time check of `Authorization: Bearer <token>` — the full header is compared
+    so the prefix cannot act as a length oracle."""
+    return hmac.compare_digest((authorization or "").encode(), f"Bearer {token}".encode())
+
+
+class BearerAuthMiddleware(BaseHTTPMiddleware):
+    async def dispatch(self, request: Request, call_next: RequestResponseEndpoint) -> Response:
+        token = os.environ.get("MYCELIUM_AUTH_TOKEN")
+        if token and request.url.path not in AUTH_EXEMPT_PATHS and not _authorized(
+            request.headers.get("authorization"), token
+        ):
+            return JSONResponse(status_code=401, content={"detail": "missing or invalid bearer token"})
+        return await call_next(request)

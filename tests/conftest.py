@@ -40,6 +40,19 @@ class FakeLLM:
         return item
 
 
+@pytest.fixture(autouse=True)
+def _fresh_a3_state():
+    """Reset workstream-A per-test state (feature 5 limiter, feature 9 idempotency
+    cache) so /ask probes in any test file start from a clean slate."""
+    from app import idempotency, rate_limit
+
+    rate_limit.limiter.reset()
+    idempotency.clear()
+    yield
+    rate_limit.limiter.reset()
+    idempotency.clear()
+
+
 @pytest.fixture
 def fake_llm(monkeypatch):
     import core.llm  # noqa: F401  (Task 2 module; the fixture needs it to exist)

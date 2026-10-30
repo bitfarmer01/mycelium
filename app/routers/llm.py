@@ -11,10 +11,12 @@ from __future__ import annotations
 import json
 import uuid
 
-from fastapi import APIRouter
+from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import HTMLResponse, StreamingResponse
 from pydantic import BaseModel
 
+from app.idempotency import cached_answer, remember_answer
+from app.rate_limit import limiter
 from app.routers.common import _audio_url, _jsonable, _mod, _run
 
 router = APIRouter()
@@ -25,13 +27,38 @@ class AskIn(BaseModel):
     session_id: str | None = None
 
 
+def _enforce_session_limit(session_id: str | None) -> None:
+    """Feature 5: per-session fixed window over the ask surface; 429 with Retry-After when full.
+
+    The limit comes from the model gateway's bucket config (core.llm.BUCKET_LIMITS).
+    Sessionless calls share one key rather than escaping the limit via a fresh uuid each time.
+    """
+    key = session_id or "anonymous"
+    if not limiter.check(key):
+        raise HTTPException(
+            status_code=429,
+            detail=f"rate limit exceeded: {limiter.limit} requests per {limiter.window_s:g}s for this session",
+            headers={"Retry-After": f"{limiter.retry_after(key):.0f}"},
+        )
+
+
 @router.post("/ask")
-async def ask(body: AskIn):
+async def ask(body: AskIn, request: Request):
+    # Feature 9: a retried request with the same Idempotency-Key returns the
+    # first answer — one answer, one ledger event — with no second model call.
+    idem_key = request.headers.get("idempotency-key")
+    if idem_key:
+        hit = cached_answer(idem_key)
+        if hit is not None:
+            return hit
     sid = body.session_id or str(uuid.uuid4())
+    _enforce_session_limit(body.session_id)
     out = await _run("reflex", "ask", body.text, sid)
     if isinstance(out, dict):
         out.setdefault("session_id", sid)
         out["audio_url"] = _audio_url(out.get("spoken"))
+    if idem_key and isinstance(out, dict):
+        remember_answer(idem_key, out)
     return out
 
 
@@ -43,6 +70,7 @@ def _sse_frame(event: dict) -> str:
 @router.post("/ask/stream")
 async def ask_stream(body: AskIn):
     sid = body.session_id or str(uuid.uuid4())
+    _enforce_session_limit(body.session_id)
     stream = _mod("answer_stream")
 
     async def frames():

@@ -6,7 +6,7 @@ import { travelPrior, setPrior } from "./prior.js";
 import { feedAdd, feedEl } from "./feed.js";
 import { scheduleVitals } from "./vitals.js";
 
-function chipFor(r, taken) {
+function chipFor(r, taken, flipText) {
   var chip = el("button", "chip" + (taken ? " taken" : ""));
   chip.type = "button";
   if (taken) chip.setAttribute("aria-current", "true");
@@ -16,13 +16,30 @@ function chipFor(r, taken) {
   chip.appendChild(head);
   chip.appendChild(el("div", "cbody", String(r.paraphrase == null ? "" : r.paraphrase)));
   chip.appendChild(el("div", "cnum", "p " + num(r.p, 2) + " · posterior " + num(r.posterior, 2)));
-  if (taken) { chip.disabled = true; chip.title = "the reading Mycelium took"; }
+  if (taken) {
+    /* aria-disabled instead of disabled: the taken chip must stay focusable so
+       the flip_condition tooltip is keyboard-operable (feature 63) */
+    chip.setAttribute("aria-disabled", "true");
+    chip.title = "the reading Mycelium took";
+    if (flipText) {
+      var tip = el("span", "tip");
+      tip.id = "tip-" + String(r.role == null ? "x" : r.role).replace(/[^a-z0-9-]/gi, "");
+      tip.setAttribute("role", "tooltip");
+      tip.appendChild(el("b", null, "flips the reading if"));
+      tip.appendChild(document.createTextNode(String(flipText)));
+      chip.setAttribute("aria-describedby", tip.id);
+      chip.appendChild(tip);
+    }
+  }
   else { chip.title = "correct to this reading"; chip.addEventListener("click", function () { correct(r.role); }); }
   return chip;
 }
 function renderChips(res) {
   var wrap = $("#chips"); wrap.textContent = "";
-  (res.readings || []).forEach(function (r) { wrap.appendChild(chipFor(r, String(r.role) === String(res.taken))); });
+  (res.readings || []).forEach(function (r) {
+    var taken = String(r.role) === String(res.taken);
+    wrap.appendChild(chipFor(r, taken, taken ? res.flip_condition : null));
+  });
   if (!wrap.children.length) wrap.appendChild(el("span", "hint", "no readings"));
 }
 function markCorrecting(role) {

@@ -109,14 +109,14 @@ async def test_reflect_route(monkeypatch, client):
 
 
 async def test_vitals_without_baseline_is_null(monkeypatch, client, tmp_path):
-    import app.server as server
+    import app.routers.vitals as vitals
     import core.db
 
     async def boom(sql, vars=None):
         raise RuntimeError("no db")
 
     monkeypatch.setattr(core.db, "q", boom)
-    monkeypatch.setattr(server, "BASELINE_PATH", tmp_path / "missing.json")
+    monkeypatch.setattr(vitals, "BASELINE_PATH", tmp_path / "missing.json")
     monkeypatch.delenv("DAYTONA_API_KEY", raising=False)
     _stub(monkeypatch, "core.growth", slot_version=lambda: "v1.0", load_slot=lambda: "slot", slot_hash=lambda t: "abc")
     async with client as c:

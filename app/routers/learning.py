@@ -95,3 +95,19 @@ async def import_state(body: ImportIn):
         return await _run("learn", "import_state", body.state, body.wipe)
     except Exception as e:
         raise HTTPException(status_code=422, detail=f"import failed: {type(e).__name__}") from e
+
+
+class CompactIn(BaseModel):
+    days: int = 30
+    dry_run: bool = False
+
+
+@router.post("/learning/compact")
+async def compact(body: CompactIn):
+    """Fold ledger rows older than `days` into aggregates; dry_run reports first (feature 37)."""
+    if body.days < 1:
+        raise HTTPException(status_code=422, detail="days must be >= 1")
+    try:
+        return await _run("learn", "compact_ledger", body.days, body.dry_run)
+    except Exception as e:
+        raise HTTPException(status_code=503, detail=f"db unavailable: {type(e).__name__}") from e

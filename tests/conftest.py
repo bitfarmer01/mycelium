@@ -75,3 +75,13 @@ def fake_db(monkeypatch):
     fake = FakeDB()
     monkeypatch.setattr(core.db, "q", fake.q)
     return fake
+
+
+@pytest.fixture(autouse=True)
+def _exam_snapshot_tmp(monkeypatch, tmp_path):
+    """Keep exam burst snapshots out of the repo data/ tree during tests."""
+    try:
+        from core import exam
+    except Exception:  # noqa: BLE001 — module optional for non-exam tests
+        return
+    monkeypatch.setattr(exam, "snapshot_path", lambda: tmp_path / "slot_pre_burst.json")

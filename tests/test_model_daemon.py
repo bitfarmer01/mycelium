@@ -8,6 +8,7 @@ so a CLI build that cannot serve stream-json degrades to today's behavior instea
 from __future__ import annotations
 
 import json
+import logging
 import os
 import queue
 import subprocess
@@ -200,3 +201,70 @@ def test_idle_ttl_reaps_unused_warm_process():
     with pytest.raises(llm.DaemonUnavailable):
         d.run(SYS, SCHEMA, "q", timeout_s=1, bucket="voice")
     assert killed == [1]  # the stale process was reaped, not served
+
+
+def test_dead_daemon_process_falls_back_to_cold_and_cools_down(monkeypatch, caplog):
+    monkeypatch.setenv("MYCELIUM_MODEL_DAEMON", "1")
+    spawns: list[FakeDaemonCLI] = []
+
+    def fake_popen(args, **kw):
+        fake = FakeDaemonCLI(args, die_immediately=True)  # CLI cannot serve stream-json: dies at startup
+        spawns.append(fake)
+        return fake
+
+    monkeypatch.setattr(llm.subprocess, "Popen", fake_popen)
+    _cold_ok(monkeypatch)
+
+    key = llm.ModelDaemon.key(SYS, SCHEMA)
+    assert llm.call_json(SYS, "q0", SCHEMA) == {"answer": "cold:q0"}  # first use: cold, teaches the key
+    assert llm.call_json(SYS, "q1", SCHEMA) == {"answer": "cold:q1"}  # prewarm starts here
+    assert _wait_for(lambda: llm._daemon().warm_keys()), "dead fake never registered"
+
+    with caplog.at_level(logging.WARNING, logger="core.llm"):
+        assert llm.call_json(SYS, "q2", SCHEMA) == {"answer": "cold:q2"}  # daemon call fails -> cold answer
+    assert any("daemon call failed" in r.message for r in caplog.records)  # surfaced, not swallowed
+
+    assert llm.call_json(SYS, "q3", SCHEMA) == {"answer": "cold:q3"}
+    assert len(spawns) == 1  # the single q1 prewarm: after its death, cooldown blocks all further spawns
+    assert time.monotonic() - llm._daemon()._cooldown[key] < 5  # the failed key is backing off
+
+
+def test_daemon_timeout_falls_back_to_cold_quickly(monkeypatch):
+    monkeypatch.setenv("MYCELIUM_MODEL_DAEMON", "1")
+
+    def fake_popen(args, **kw):
+        return FakeDaemonCLI(args, startup_s=0.0, hang=True)  # accepts the prompt, never answers
+
+    monkeypatch.setattr(llm.subprocess, "Popen", fake_popen)
+    cold_calls = _cold_ok(monkeypatch)
+
+    assert llm.call_json(SYS, "q0", SCHEMA) == {"answer": "cold:q0"}
+    assert llm.call_json(SYS, "q1", SCHEMA) == {"answer": "cold:q1"}  # prewarm starts; hangs forever
+    assert _wait_for(lambda: llm._daemon().warm_keys()), "warm process never registered"
+
+    t0 = time.monotonic()
+    answer = llm.call_json(SYS, "q2", SCHEMA, timeout_s=0.3)  # hung daemon must not eat the cold budget
+    wall = time.monotonic() - t0
+
+    assert answer == {"answer": "cold:q2"}  # caller got a real answer from the cold path
+    assert wall < 2.0, f"fallback took {wall:.2f}s"  # bounded by the daemon timeout, not by a hung process
+    assert cold_calls == ["q0", "q1", "q2"]
+
+
+def test_missing_cli_degrades_to_cold_without_churn(monkeypatch):
+    monkeypatch.setenv("MYCELIUM_MODEL_DAEMON", "1")
+    attempts: list[int] = []
+
+    def fake_popen(args, **kw):
+        attempts.append(1)
+        raise FileNotFoundError("claude not on PATH")  # daemon cannot even spawn
+
+    monkeypatch.setattr(llm.subprocess, "Popen", fake_popen)
+    cold_calls = _cold_ok(monkeypatch)
+
+    assert llm.call_json(SYS, "q0", SCHEMA) == {"answer": "cold:q0"}
+    assert llm.call_json(SYS, "q1", SCHEMA) == {"answer": "cold:q1"}  # spawn attempt fails, cooldown starts
+    assert llm.call_json(SYS, "q2", SCHEMA) == {"answer": "cold:q2"}
+    assert llm.call_json(SYS, "q3", SCHEMA) == {"answer": "cold:q3"}
+    assert len(attempts) == 1  # exactly one spawn attempt, then quiet backoff — no per-call churn
+    assert len(cold_calls) == 4  # every question answered by the cold path

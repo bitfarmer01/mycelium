@@ -42,13 +42,15 @@ class FakeLLM:
 
 @pytest.fixture(autouse=True)
 def _fresh_a3_state():
-    """Reset workstream-A per-test state (feature 5 limiter) so /ask probes in any
-    test file start with an empty rate-limit window."""
-    from app import rate_limit
+    """Reset workstream-A per-test state (feature 5 limiter, feature 9 idempotency
+    cache) so /ask probes in any test file start from a clean slate."""
+    from app import idempotency, rate_limit
 
     rate_limit.limiter.reset()
+    idempotency.clear()
     yield
     rate_limit.limiter.reset()
+    idempotency.clear()
 
 
 @pytest.fixture

@@ -11,10 +11,11 @@ from __future__ import annotations
 import json
 import uuid
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import HTMLResponse, StreamingResponse
 from pydantic import BaseModel
 
+from app.idempotency import cached_answer, remember_answer
 from app.rate_limit import limiter
 from app.routers.common import _audio_url, _jsonable, _mod, _run
 
@@ -42,13 +43,22 @@ def _enforce_session_limit(session_id: str | None) -> None:
 
 
 @router.post("/ask")
-async def ask(body: AskIn):
+async def ask(body: AskIn, request: Request):
+    # Feature 9: a retried request with the same Idempotency-Key returns the
+    # first answer — one answer, one ledger event — with no second model call.
+    idem_key = request.headers.get("idempotency-key")
+    if idem_key:
+        hit = cached_answer(idem_key)
+        if hit is not None:
+            return hit
     sid = body.session_id or str(uuid.uuid4())
     _enforce_session_limit(body.session_id)
     out = await _run("reflex", "ask", body.text, sid)
     if isinstance(out, dict):
         out.setdefault("session_id", sid)
         out["audio_url"] = _audio_url(out.get("spoken"))
+    if idem_key and isinstance(out, dict):
+        remember_answer(idem_key, out)
     return out
 
 

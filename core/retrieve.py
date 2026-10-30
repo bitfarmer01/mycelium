@@ -380,13 +380,15 @@ def numbered_context(rows: list[dict]) -> tuple[str, list[Citation]]:
     return "\n\n".join(parts), cites
 
 
-async def retrieve(text: str, k: int | None = None, shape: str | None = None,
-                   reading: dict | None = None) -> tuple[str, list[Citation], list[dict]]:
-    """embed -> knn -> hybrid rerank[:k] -> numbered_context; bumps retrieved_count on the chosen chunks.
+async def ranked_chunks(text: str, k: int | None = None, shape: str | None = None,
+                        reading: dict | None = None) -> list[dict]:
+    """Hybrid-ranked, de-duplicated candidate rows — the side-effect-free core of retrieve().
 
     `shape` (feature 16) tunes k through SHAPE_TOP_K when the caller has read the question's
     shape; an explicit `k` wins over the override. `reading` (feature 15) is the taken
     reading; its role-specific signal is expanded into the query before embedding.
+    Feature 20: /search serves this exact path without the context/fitness side effects,
+    so debug output always matches what the answer path ranked.
     """
     k = effective_k(shape, k)
     t0 = time.perf_counter()
@@ -399,6 +401,13 @@ async def retrieve(text: str, k: int | None = None, shape: str | None = None,
     embeddings = await chunk_embeddings([str(row.get("id", "")) for row in ranked])
     top = dedup_chunks(ranked, embeddings)[:k]
     latency.record((time.perf_counter() - t0) * 1000.0)  # feature 18: p50/p95 at /vitals
+    return top
+
+
+async def retrieve(text: str, k: int | None = None, shape: str | None = None,
+                   reading: dict | None = None) -> tuple[str, list[Citation], list[dict]]:
+    """ranked_chunks -> numbered_context; bumps retrieved_count on the chosen chunks."""
+    top = await ranked_chunks(text, k, shape, reading)
     ctx, cites = numbered_context(top)
     ids = [c.chunk_id for c in cites if c.chunk_id]
     if ids:

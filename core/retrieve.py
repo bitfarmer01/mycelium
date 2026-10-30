@@ -3,7 +3,10 @@ from __future__ import annotations
 
 import hashlib
 import logging
+import math
+import re
 import threading
+from collections import Counter
 from pathlib import Path
 
 import numpy as np
@@ -92,6 +95,24 @@ def embed_query(text: str) -> list[float]:
 _KNN_FIELDS = "id, document, title, source_link, alpha, beta"
 
 
+# ---- hybrid scoring (feature 14): fitness-weighted cosine blended with BM25 ----
+# BM25 rescues exact product terms: a keyword-only query like "HNSW" scores zero
+# semantic signal in bge space but is unambiguous lexically.
+TOKEN_RE = re.compile(r"[a-z0-9]+")
+# Domain terms (product names, acronyms) are exactly what keyword queries target —
+# the stoplist only drops function words.
+BM25_STOPWORDS = frozenset({
+    "a", "an", "and", "are", "as", "at", "be", "by", "did", "do", "does", "for", "from",
+    "how", "i", "in", "is", "it", "of", "on", "or", "that", "the", "this", "to", "was",
+    "what", "when", "where", "which", "who", "why",
+})
+BM25_K1 = 1.5
+BM25_B = 0.75
+# Blend weight for the min-max-normalized BM25 component in hybrid_rerank.
+# Overridable per environment via CONFIG["bm25_weight"] without touching contracts.py.
+BM25_WEIGHT = 0.35
+
+
 async def knn(vec: list[float], k: int = 8) -> list[dict]:
     """Top k*5 chunks by cosine. HNSW KNN first; on error, full scan with numpy cosine."""
     n = int(k) * 5
@@ -131,6 +152,76 @@ def rerank(rows: list[dict], floor: float = 0.5) -> list[dict]:
     return sorted(rows, key=lambda r: r["score"], reverse=True)
 
 
+def tokenize(text: str) -> list[str]:
+    """Lowercase alphanumeric tokens minus function words; product terms survive intact."""
+    return [t for t in TOKEN_RE.findall(text.lower()) if t not in BM25_STOPWORDS]
+
+
+def bm25_scores(query: str, docs: list[str]) -> list[float]:
+    """Okapi BM25 of each doc against the query; IDF and avgdl come from the candidate set.
+
+    Pure and model-free. The candidate set (the KNN pool, tens of rows) is the corpus:
+    IDF from a same-domain candidate pool separates matching from non-matching chunks
+    exactly where it matters — inside the rerank cut.
+    """
+    q = tokenize(query)
+    n = len(docs)
+    if not q or n == 0:
+        return [0.0] * n
+    doc_tokens = [tokenize(d) for d in docs]
+    avgdl = (sum(len(dt) for dt in doc_tokens) / n) or 1.0
+    df: Counter[str] = Counter()
+    for dt in doc_tokens:
+        df.update(set(dt))
+    scores = []
+    for dt in doc_tokens:
+        tf = Counter(dt)
+        dl = len(dt) or 1
+        s = 0.0
+        for t in q:
+            f = tf[t]
+            if not f:
+                continue
+            idf = math.log(1.0 + (n - df[t] + 0.5) / (df[t] + 0.5))
+            s += idf * f * (BM25_K1 + 1.0) / (f + BM25_K1 * (1.0 - BM25_B + BM25_B * dl / avgdl))
+        scores.append(s)
+    return scores
+
+
+def hybrid_rerank(rows: list[dict], query: str, floor: float = 0.5, weight: float = BM25_WEIGHT) -> list[dict]:
+    """rerank (fitness-weighted cosine) blended with normalized BM25; sorted desc; sets row['score'], row['bm25'].
+
+    score = (1 - weight) * cosine_fit + weight * bm25_norm, with bm25_norm min-max scaled
+    across the candidate set. All-zero BM25 leaves the cosine-fit ordering untouched, so
+    semantically-driven queries behave exactly as before.
+    """
+    if not rows:
+        return []
+    rows = rerank(rows, floor)
+    bm = bm25_scores(query, [r.get("document") or "" for r in rows])
+    lo, hi = min(bm), max(bm)
+    rng = hi - lo
+    for row, b in zip(rows, bm):
+        row["bm25"] = float(b)
+        row["bm25_norm"] = (b - lo) / rng if rng > 0 else 0.0
+        row["score"] = (1.0 - weight) * row["score"] + weight * row["bm25_norm"]
+    return sorted(rows, key=lambda r: r["score"], reverse=True)
+
+
+# ---- per-shape top-k (feature 16) ----
+# Comparative shapes need wider candidate sets (both sides of a comparison must survive
+# the rerank cut); narrow factual shapes trade recall for precision so off-topic chunks
+# don't crowd the numbered context. Absent shape -> CONFIG["knn_k"].
+SHAPE_TOP_K = {"who-owns": 6, "how-to": 10, "policy": 10, "when": 8, "definition": 6, "comparison": 12, "factual": 6}
+
+
+def effective_k(shape: str | None, k: int | None = None) -> int:
+    """Explicit k wins; else the shape override; else the CONFIG base."""
+    if k is not None:
+        return int(k)
+    return SHAPE_TOP_K.get(shape or "") or CONFIG["knn_k"]
+
+
 def numbered_context(rows: list[dict]) -> tuple[str, list[Citation]]:
     """'[Document N (Source: <title>)]\\n<document>' blocks joined by blank lines, plus Citations (n from 1)."""
     parts, cites = [], []
@@ -151,11 +242,16 @@ def numbered_context(rows: list[dict]) -> tuple[str, list[Citation]]:
     return "\n\n".join(parts), cites
 
 
-async def retrieve(text: str, k: int = 8) -> tuple[str, list[Citation], list[dict]]:
-    """embed -> knn -> rerank[:k] -> numbered_context; bumps retrieved_count on the chosen chunks."""
+async def retrieve(text: str, k: int | None = None, shape: str | None = None) -> tuple[str, list[Citation], list[dict]]:
+    """embed -> knn -> hybrid rerank[:k] -> numbered_context; bumps retrieved_count on the chosen chunks.
+
+    `shape` (feature 16) tunes k through SHAPE_TOP_K when the caller has read the question's
+    shape; an explicit `k` wins over the override.
+    """
+    k = effective_k(shape, k)
     vec = embed_query(text)
     rows = await knn(vec, k)
-    top = rerank(rows, CONFIG["retrieval_fitness_floor"])[:k]
+    top = hybrid_rerank(rows, text, CONFIG["retrieval_fitness_floor"], CONFIG.get("bm25_weight", BM25_WEIGHT))[:k]
     ctx, cites = numbered_context(top)
     ids = [c.chunk_id for c in cites if c.chunk_id]
     if ids:

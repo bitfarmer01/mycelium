@@ -3,6 +3,7 @@ import { state } from "./session.js";
 import { setPrior } from "./prior.js";
 import { renderChips } from "./corrections.js";
 import { speak } from "./audio.js";
+import { isCaptions, CAPTIONS_CHANGE_EVENT } from "./captions.js";
 
 /* ------------------------------------------------------------------------ answer -- */
 function renderScreen(text) {
@@ -59,6 +60,7 @@ function renderAnswer(res) {
   $("#entropyBadge").textContent = "H " + (res.entropy_bits == null ? "—" : num(res.entropy_bits, 3)) + " bits";
   var ms = $("#msBadge"); ms.textContent = res.ms == null ? "" : res.ms + " ms"; ms.hidden = res.ms == null;
   $("#spoken").textContent = res.spoken == null ? "" : String(res.spoken);
+  applyCaptions();
   renderScreen(res.screen);
   $("#chunkCard").hidden = true;
   renderChips(res);
@@ -72,6 +74,17 @@ function renderAnswer(res) {
   speak(res.spoken, res.audio_url);
 }
 
+function applyCaptions() {
+  /* feature 56: the caption block renders beside every spoken answer unless
+     caption-always was switched off (preference persisted in localStorage) */
+  var block = $("#spokenBlock");
+  if (block) block.hidden = !isCaptions();
+}
+
 $("#replayBtn").addEventListener("click", function () { speak(state.lastSpoken, state.lastAudioUrl); });
+
+if (typeof document !== "undefined") {
+  document.addEventListener(CAPTIONS_CHANGE_EVENT, applyCaptions);
+}
 
 export { renderAnswer };

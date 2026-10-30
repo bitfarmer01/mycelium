@@ -28,6 +28,13 @@ async function jpost(path, body) {
   if (!res.ok) throw parseErr(data, res);
   return data || {};
 }
+async function jput(path, body) {
+  if (MOCK) return mockPut(path, body);
+  var res = await fetch(path, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body == null ? {} : body) });
+  var data = null; try { data = await res.json(); } catch (e) {}
+  if (!res.ok) throw parseErr(data, res);
+  return data || {};
+}
 async function jpostForm(path, form) {
   if (MOCK) return mockForm(path, form);
   var res = await fetch(path, { method: "POST", body: form });
@@ -41,6 +48,7 @@ var mockAskCount = 0;
 async function mockGet(path) {
   if (path.indexOf("/vitals") === 0) { await delay(120); return clone(MOCK_VITALS); }
   if (path.indexOf("/config") === 0) { await delay(80); return clone(FX.config); }
+  if (path.indexOf("/voice/prefs") === 0) { /* feature 57: demo-friendly mock preference */ await delay(60); return { user: "mock", volume: 0.8, speed: 1.0, stored: true }; }
   throw ApiError("no mock for GET " + path, 404);
 }
 async function mockPost(path, body) {
@@ -112,4 +120,12 @@ async function mockForm(path, form) {
   return out;
 }
 
-export { jget, jpost, jpostForm };
+/* Feature 57: mock mode echoes the prefs save so demos never hit the network. */
+function mockPut(path, body) {
+  if (path === "/voice/prefs") {
+    return { user: (body && body.user) || "default", volume: Number(body && body.volume), speed: Number(body && body.speed), stored: true };
+  }
+  throw ApiError("no mock for PUT " + path, 404);
+}
+
+export { jget, jpost, jput, jpostForm };

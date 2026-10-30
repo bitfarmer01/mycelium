@@ -26,3 +26,5 @@ async function ask() {
 
 sendBtn.addEventListener("click", ask);
 qInput.addEventListener("keydown", function (ev) { if (ev.key === "Enter") { ev.preventDefault(); ask(); } });
+
+export { ask };

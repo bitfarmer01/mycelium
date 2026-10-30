@@ -22,6 +22,8 @@ import pytest
 ROUTE_MANIFEST = [
     ("/", {"GET"}, "index", False),
     ("/ask", {"POST"}, "ask", False),
+    ("/ask/stream", {"POST"}, "ask_stream", False),
+    ("/ask/stream/demo", {"GET"}, "ask_stream_demo", False),
     ("/config", {"GET"}, "config", False),
     ("/confirm", {"POST"}, "confirm", False),
     ("/correct", {"POST"}, "correct", False),

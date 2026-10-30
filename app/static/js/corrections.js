@@ -3,6 +3,7 @@ import { state } from "./session.js";
 import { jpost } from "./api.js";
 import { setStatus } from "./status.js";
 import { travelPrior, setPrior } from "./prior.js";
+import { showPreview } from "./preview.js";
 import { feedAdd, feedEl } from "./feed.js";
 import { scheduleVitals } from "./vitals.js";
 
@@ -51,7 +52,19 @@ function addCorrectFeedRow(toRole) {
   var row = { id: "ledger:correct:" + Date.now().toString(36), type: "correct", target: "shape", target_kind: "shape", before: 0.333, after: 0.533, delta: 0.2, cause: "user corrected the reading → " + toRole, ts: new Date().toISOString() };
   feedAdd(row); glow(feedEl.firstChild, "r");
 }
+/* feature 35: tapping a chip shows the prior-delta preview first; the write
+   only happens when the preview's Submit button is pressed */
 async function correct(toRole) {
+  var q = state.ask;
+  if (!q || q.question_id == null) { setStatus("ask something first", "err"); return; }
+  markCorrecting(toRole); setStatus("calculating the prior delta…", "busy");
+  try {
+    var pv = await jpost("/learning/preview", { question_id: q.question_id, to_role: toRole, confidence: 1.0 });
+    setStatus("preview ready — nothing written until you submit", "ok");
+    showPreview(pv, function () { submitCorrect(pv.to_role); }, function () { markCorrecting(null); setStatus("correction dismissed — nothing written", "ok"); });
+  } catch (e) { markCorrecting(null); setStatus("preview failed: " + e.message, "err"); }
+}
+async function submitCorrect(toRole) {
   var q = state.ask;
   if (!q || q.question_id == null) { setStatus("ask something first", "err"); return; }
   markCorrecting(toRole); setStatus("correcting → " + toRole + " …", "busy");

@@ -9,7 +9,10 @@ from collections.abc import Iterator
 import httpx
 
 BASE = "https://api.elevenlabs.io"
-TTS_MODEL = "eleven_flash_v2_5"
+# Feature 55: named quality selector. "flash" is the default — cheapest and
+# fastest; "v3" is the higher-fidelity tier. A raw model id also passes through.
+QUALITY_MODELS = {"flash": "eleven_flash_v2_5", "v3": "eleven_v3"}
+TTS_MODEL = QUALITY_MODELS["flash"]
 STT_MODEL = "scribe_v1"
 TIMEOUT = 30.0
 
@@ -73,12 +76,22 @@ def _tts_request(text: str, voice: str, quality: str) -> bytes:
     return r.content
 
 
+def resolve_quality(quality: str | None) -> str:
+    """Feature 55: map a selector name (flash | v3, case-insensitive) to its
+    ElevenLabs model id; unknown values pass through as raw model ids."""
+    if not quality:
+        return TTS_MODEL
+    named = QUALITY_MODELS.get(quality.strip().lower())
+    return named or quality.strip()
+
+
 def tts(text: str, quality: str | None = None) -> bytes:
     """Text to mp3 bytes. Cached by (quality, voice, text): a repeated spoken
-    string never re-hits the API (feature 52)."""
+    string never re-hits the API (feature 52). `quality` accepts a selector
+    name (flash | v3) or a raw model id (feature 55)."""
     if not text or not text.strip():
         raise VoiceError("empty text")
-    q = quality or TTS_MODEL
+    q = resolve_quality(quality)
     with httpx.Client(timeout=TIMEOUT) as client:
         vid = _voice(client)
     key = _tts_cache_key(text, vid, q)

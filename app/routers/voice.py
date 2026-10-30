@@ -28,10 +28,10 @@ async def stt(audio: UploadFile = File(...)):
 
 
 @router.get("/tts")
-async def tts(text: str):
+async def tts(text: str, quality: str = "flash"):
     try:
         voice = importlib.import_module("core.voice")
-        audio = await asyncio.to_thread(voice.tts, text)
+        audio = await asyncio.to_thread(voice.tts, text, quality)
     except Exception as e:
         log.warning("tts failed: %s", type(e).__name__)
         raise HTTPException(status_code=502, detail="text-to-speech unavailable")
@@ -39,15 +39,16 @@ async def tts(text: str):
 
 
 @router.get("/tts/stream")
-async def tts_stream(text: str):
+async def tts_stream(text: str, quality: str = "flash"):
     """Feature 51: sentence-by-sentence synthesis. The first chunk — one mp3 —
     is flushed as soon as sentence one is synthesized, so the client can start
-    playback before the full answer is spoken."""
+    playback before the full answer is spoken. `quality` selects the
+    ElevenLabs model (feature 55): flash (default) or v3."""
     voice = _mod("voice")
 
     def chunks():
         try:
-            yield from voice.tts_stream(text)
+            yield from voice.tts_stream(text, quality=quality)
         except Exception as e:
             log.warning("tts stream failed: %s", type(e).__name__)
 

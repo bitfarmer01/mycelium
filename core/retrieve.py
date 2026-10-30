@@ -215,6 +215,31 @@ def hybrid_rerank(rows: list[dict], query: str, floor: float = 0.5, weight: floa
 SHAPE_TOP_K = {"who-owns": 6, "how-to": 10, "policy": 10, "when": 8, "definition": 6, "comparison": 12, "factual": 6}
 
 
+# ---- query expansion (feature 15) ----
+def expand_query(query: str, reading: dict | None = None) -> str:
+    """Fold the taken reading's role-specific signal into the retrieval query.
+
+    Each reading carries a paraphrase, an assumption, and its own query; role decides
+    what helps retrieval. An intent reading's assumption states what the asker actually
+    means — appending it pulls the chunk that answers the need, not the wording. A
+    scope reading's paraphrase bounds the domain. A literal reading IS the question,
+    so the query stands. Returns `query` unchanged when there is nothing to add.
+    """
+    if not reading:
+        return query
+    role = reading.get("role")
+    if role == "intent":
+        extra = str(reading.get("assumption") or "")
+    elif role == "scope":
+        extra = str(reading.get("paraphrase") or "")
+    else:
+        return query
+    extra = " ".join(extra.split())
+    if not extra or extra == query.strip():
+        return query
+    return f"{query} {extra}"
+
+
 def effective_k(shape: str | None, k: int | None = None) -> int:
     """Explicit k wins; else the shape override; else the CONFIG base."""
     if k is not None:
@@ -242,16 +267,19 @@ def numbered_context(rows: list[dict]) -> tuple[str, list[Citation]]:
     return "\n\n".join(parts), cites
 
 
-async def retrieve(text: str, k: int | None = None, shape: str | None = None) -> tuple[str, list[Citation], list[dict]]:
+async def retrieve(text: str, k: int | None = None, shape: str | None = None,
+                   reading: dict | None = None) -> tuple[str, list[Citation], list[dict]]:
     """embed -> knn -> hybrid rerank[:k] -> numbered_context; bumps retrieved_count on the chosen chunks.
 
     `shape` (feature 16) tunes k through SHAPE_TOP_K when the caller has read the question's
-    shape; an explicit `k` wins over the override.
+    shape; an explicit `k` wins over the override. `reading` (feature 15) is the taken
+    reading; its role-specific signal is expanded into the query before embedding.
     """
     k = effective_k(shape, k)
-    vec = embed_query(text)
+    query = expand_query(text, reading)
+    vec = embed_query(query)
     rows = await knn(vec, k)
-    top = hybrid_rerank(rows, text, CONFIG["retrieval_fitness_floor"], CONFIG.get("bm25_weight", BM25_WEIGHT))[:k]
+    top = hybrid_rerank(rows, query, CONFIG["retrieval_fitness_floor"], CONFIG.get("bm25_weight", BM25_WEIGHT))[:k]
     ctx, cites = numbered_context(top)
     ids = [c.chunk_id for c in cites if c.chunk_id]
     if ids:

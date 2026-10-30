@@ -131,7 +131,7 @@ def fake_retrieve(monkeypatch):
     import core.retrieve as retrieve_module
     from core.contracts import Citation
 
-    async def retrieve(_q, k=8):
+    async def retrieve(_q, k=8, reading=None):
         cits = [Citation(n=i + 1, chunk_id=f"c{i}", title=f"Doc {i}", link="", snippet="t", cosine=0.9)
                 for i in range(2)]
         return "\n".join(f"[Document {c.n}] {c.title}\ntext" for c in cits), cits, []

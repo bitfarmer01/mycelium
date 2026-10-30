@@ -296,7 +296,7 @@ async def ask(text: str, session_id: str) -> dict:
         taken, posterior, entropy = select_reading(r["readings"], prior)
         query = taken.get("query") or text
 
-        context, citations, _rows = await _call(retrieve.retrieve, query, k=CONFIG["knn_k"])
+        context, citations, _rows = await _call(retrieve.retrieve, query, k=CONFIG["knn_k"], reading=taken)
         citations = list(citations or [])
         slot = growth.load_slot()
         synth = await synthesize(text, context, slot, usage=usage, session=session_id)

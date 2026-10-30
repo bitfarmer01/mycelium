@@ -119,7 +119,7 @@ def _fake_pipeline(monkeypatch, fake_llm, fake_db) -> None:
 
     fake_llm.push(dict(READINGS), dict(SYNTHESIS))
 
-    def fake_retrieve(text, k=8):
+    def fake_retrieve(text, k=8, reading=None):
         return "[1] Budget\n[2] Approvals", list(CITES), []
 
     async def fake_prior(shape):

@@ -124,8 +124,8 @@ LINT_FORBIDDEN = [
 ]
 LINT_REQUIRED = ["{context}", "{question}", "[N]", "I read that as"]
 
-TARGET_KINDS = ("chunk", "source", "shape", "candidate", "lesson")
-LEDGER_TYPES = ("confirm", "correct", "prior", "decay", "veto", "gate", "promote", "lesson")
+TARGET_KINDS = ("chunk", "source", "shape", "candidate", "lesson", "question")
+LEDGER_TYPES = ("confirm", "correct", "prior", "decay", "veto", "gate", "promote", "lesson", "usage")
 
 
 @dataclass

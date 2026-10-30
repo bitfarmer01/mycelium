@@ -26,11 +26,14 @@ ROUTE_MANIFEST = [
     ("/confirm", {"POST"}, "confirm", False),
     ("/correct", {"POST"}, "correct", False),
     ("/events", set(), "events", True),
+    ("/exam/burst", {"POST"}, "exam_burst", False),
+    ("/exam/history", {"GET"}, "exam_history", False),
     ("/improve", {"POST"}, "improve", False),
     ("/reflect", {"POST"}, "reflect", False),
     ("/stt", {"POST"}, "stt", False),
     ("/tick", {"POST"}, "tick", False),
     ("/tts", {"GET"}, "tts", False),
+    ("/tts/stream", {"GET"}, "tts_stream", False),
     ("/upload", {"POST"}, "upload", False),
     ("/vitals", {"GET"}, "vitals", False),
 ]
@@ -75,7 +78,7 @@ def probed_client(monkeypatch):
     async def ask(text, session_id):
         return {"spoken": "ok", "question_id": "question:x"}
 
-    async def correct(question_id, to_role):
+    async def correct(question_id, to_role, confidence=1.0, actor=""):
         return {"ok": True}
 
     async def confirm(question_id):
@@ -93,14 +96,17 @@ def probed_client(monkeypatch):
     def stt(data, content_type):
         return "hello"
 
-    def tts(text):
+    def tts(text, quality=None):
         return b"audio"
+
+    def tts_stream(text, quality=None):
+        return iter([b"audio"])
 
     _stub(monkeypatch, "core.reflex", ask=ask)
     _stub(monkeypatch, "core.learn", correct=correct, confirm=confirm, decay_tick=decay_tick)
     _stub(monkeypatch, "core.reflect", reflect=reflect)
     _stub(monkeypatch, "core.growth", improve=improve, slot_version=lambda: "v1", load_slot=lambda: "s", slot_hash=lambda t: "h")
-    _stub(monkeypatch, "core.voice", stt=stt, tts=tts)
+    _stub(monkeypatch, "core.voice", stt=stt, tts=tts, tts_stream=tts_stream)
 
     from app.server import app
 
@@ -119,7 +125,10 @@ PROBES = [
     ("POST /improve", "post", "/improve", {"json": {}}, 200),
     ("POST /stt", "post", "/stt", {"files": {"audio": ("a.webm", b"x", "audio/webm")}}, 200),
     ("GET /tts", "get", "/tts", {"params": {"text": "hi"}}, 200),
+    ("GET /tts quality selector", "get", "/tts", {"params": {"text": "hi", "quality": "v3"}}, 200),
     ("GET /tts missing param", "get", "/tts", None, 422),
+    ("GET /tts/stream", "get", "/tts/stream", {"params": {"text": "hi"}}, 200),
+    ("GET /tts/stream missing param", "get", "/tts/stream", None, 422),
     ("GET /vitals", "get", "/vitals", None, 200),
     ("GET /config", "get", "/config", None, 200),
     ("POST /upload no files", "post", "/upload", None, 422),
@@ -145,6 +154,8 @@ async def test_docs_and_openapi_still_render_every_route(probed_client):
     assert docs.status_code == 200 and "html" in docs.headers["content-type"]
     assert schema.status_code == 200
     paths = schema.json()["paths"]
-    assert set(paths) == set(OPENAPI_METHODS), "openapi gained or lost HTTP routes"
+    # The monolith's route table must never shrink; additive workstream routes
+    # (B /search, D /learning/*, …) extend it on top.
+    assert set(OPENAPI_METHODS) <= set(paths), "openapi lost monolith routes"
     for path, methods in OPENAPI_METHODS.items():
-        assert sorted(paths[path]) == methods, f"{path}: openapi methods {sorted(paths[path])} != {methods}"
+        assert methods <= sorted(paths[path]), f"{path}: openapi methods shrank"

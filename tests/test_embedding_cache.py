@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import asyncio
 
+import numpy as np
 import pytest
 
 from core.retrieve import EmbeddingCache, content_hash
@@ -60,6 +61,19 @@ def test_second_ingest_of_unchanged_corpus_encodes_nothing(tmp_path, cache, coun
     assert len(counting_embed.batches) == batches_after_first  # ...but the second ingest added zero encode batches
     # explicit call-count assertion: every chunk text was encoded exactly once across both ingests
     assert len(counting_embed.texts) == first_chunks
+
+
+def test_put_tolerates_concurrent_cache_instances(tmp_path):
+    # PR #3 review: two EmbeddingCache instances on one path must not clobber each
+    # other's entries — the worst case without this is extra re-encodes, never stale vectors.
+    path = tmp_path / "cache.npz"
+    a, b = EmbeddingCache(path), EmbeddingCache(path)
+    a.put({"h1": [1.0, 0.0]})  # a warms its in-memory view
+    b.put({"h2": [0.0, 1.0]})  # b never saw h1
+    a.put({"h3": [1.0, 1.0]})  # pre-fix, this write dropped h2 from the file
+    final = EmbeddingCache(path)
+    assert set(final.get_many(["h1", "h2", "h3"])) == {"h1", "h2", "h3"}
+    assert np.allclose(final.get_many(["h2"])["h2"], [0.0, 1.0])
 
 
 def test_second_build_chunks_encodes_nothing(tmp_path, cache, counting_embed):

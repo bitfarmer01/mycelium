@@ -4,9 +4,11 @@ from __future__ import annotations
 import hashlib
 import logging
 import math
+import os
 import re
 import threading
 import time
+import uuid
 from collections import Counter, deque
 from pathlib import Path
 
@@ -51,15 +53,21 @@ class EmbeddingCache:
         self._lock = threading.Lock()
         self._data: dict[str, np.ndarray] | None = None
 
+    def _read_disk(self) -> dict[str, np.ndarray]:
+        """Fresh read of the on-disk cache; {} when absent or unreadable (derived data, safe to re-encode)."""
+        if not self.path.exists():
+            return {}
+        try:
+            with np.load(self.path) as z:
+                return {str(h): np.asarray(vec, dtype=np.float32) for h, vec in zip(z["hashes"].tolist(), z["matrix"])}
+        except Exception as e:  # noqa: BLE001
+            log.warning("embedding cache unreadable at %s, re-encoding: %s", self.path, e)
+            return {}
+
     def _load(self) -> dict[str, np.ndarray]:
         with self._lock:
             if self._data is None:
-                data: dict[str, np.ndarray] = {}
-                if self.path.exists():
-                    with np.load(self.path) as z:
-                        for h, vec in zip(z["hashes"].tolist(), z["matrix"]):
-                            data[str(h)] = np.asarray(vec, dtype=np.float32)
-                self._data = data
+                self._data = self._read_disk()
             return self._data
 
     def get_many(self, hashes: list[str]) -> dict[str, np.ndarray]:
@@ -69,14 +77,24 @@ class EmbeddingCache:
             return {h: data[h] for h in hashes if h in data}
 
     def put(self, entries: dict[str, np.ndarray | list[float]]) -> None:
-        """Merge entries and persist atomically (write temp file, then rename)."""
+        """Merge entries and persist atomically (write temp file, then rename).
+
+        Tolerant of concurrent cache instances on the same path: the on-disk file is
+        re-read and merged before persisting, so entries another instance appended
+        after our last load survive. Without that, one instance's write clobbers the
+        other's keys and forces extra re-encodes — never stale vectors, since keys
+        are content hashes. Unique tmp names keep concurrent writers from eating
+        each other's temp files.
+        """
         if not entries:
             return
         with self._lock:
-            data = self._data or {}
+            data = dict(self._data or {})
             data.update({h: np.asarray(v, dtype=np.float32) for h, v in entries.items()})
+            for h, v in self._read_disk().items():  # another instance may have appended
+                data.setdefault(h, v)
             self.path.parent.mkdir(parents=True, exist_ok=True)
-            tmp = self.path.with_name(self.path.name + ".tmp")
+            tmp = self.path.with_name(f"{self.path.name}.{os.getpid()}.{uuid.uuid4().hex[:8]}.tmp")
             keys = sorted(data)
             with tmp.open("wb") as fh:
                 np.savez(fh, hashes=np.array(keys), matrix=np.stack([data[k] for k in keys]).astype(np.float32))

@@ -3,6 +3,8 @@ from __future__ import annotations
 
 import hashlib
 import os
+import re
+from collections.abc import Iterator
 
 import httpx
 
@@ -86,6 +88,25 @@ def tts(text: str, quality: str | None = None) -> bytes:
     audio = _tts_request(text, vid, q)
     _tts_cache[key] = audio
     return audio
+
+
+_SENTENCE_RE = re.compile(r"(?<=[.!?])\s+")
+
+
+def _split_sentences(text: str) -> list[str]:
+    """Sentence split for feature 51: synthesize one sentence at a time."""
+    return [s for s in _SENTENCE_RE.split(text.strip()) if s.strip()]
+
+
+def tts_stream(text: str, quality: str | None = None) -> Iterator[bytes]:
+    """Feature 51: synthesize sentence-by-sentence so playback can start on the
+    first sentence while later ones are still synthesizing. Lazy generator —
+    each sentence only hits the API when its chunk is pulled. Shares the tts()
+    cache, so streaming and full-answer synthesis never double-spend."""
+    if not text or not text.strip():
+        raise VoiceError("empty text")
+    for sentence in _split_sentences(text):
+        yield tts(sentence, quality=quality)
 
 
 def stt(audio: bytes, mime: str) -> str:

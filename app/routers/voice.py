@@ -6,7 +6,7 @@ import importlib
 import logging
 
 from fastapi import APIRouter, File, HTTPException, UploadFile
-from fastapi.responses import Response
+from fastapi.responses import Response, StreamingResponse
 
 from app.routers.common import _mod
 
@@ -36,3 +36,19 @@ async def tts(text: str):
         log.warning("tts failed: %s", type(e).__name__)
         raise HTTPException(status_code=502, detail="text-to-speech unavailable")
     return Response(content=audio, media_type="audio/mpeg")
+
+
+@router.get("/tts/stream")
+async def tts_stream(text: str):
+    """Feature 51: sentence-by-sentence synthesis. The first chunk — one mp3 —
+    is flushed as soon as sentence one is synthesized, so the client can start
+    playback before the full answer is spoken."""
+    voice = _mod("voice")
+
+    def chunks():
+        try:
+            yield from voice.tts_stream(text)
+        except Exception as e:
+            log.warning("tts stream failed: %s", type(e).__name__)
+
+    return StreamingResponse(chunks(), media_type="audio/mpeg")

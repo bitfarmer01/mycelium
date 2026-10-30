@@ -240,6 +240,57 @@ def expand_query(query: str, reading: dict | None = None) -> str:
     return f"{query} {extra}"
 
 
+# ---- context-pack de-dup (feature 17) ----
+# Two chunks whose embeddings agree this closely are near-duplicates (overlapping
+# splits, scraped-twice pages); both in one pack wastes a context slot and double-cites
+# the same sentence. Rank order decides the survivor.
+DEDUP_THRESHOLD = 0.9
+
+
+async def chunk_embeddings(chunk_ids: list[str]) -> list[np.ndarray] | None:
+    """Embeddings for chunk ids, aligned to input order; None when the DB can't serve them.
+
+    None is the skip signal: de-dup must never block retrieval (graceful degradation).
+    """
+    if not chunk_ids:
+        return None
+    try:
+        rows = await db.q("SELECT id, embedding FROM chunk WHERE <string> id IN $ids;", {"ids": chunk_ids})
+    except Exception as e:  # noqa: BLE001
+        log.warning("de-dup embedding fetch failed: %s", e)
+        return None
+    by_id = {str(row.get("id")): row.get("embedding") for row in rows if isinstance(row, dict)}
+    vecs = []
+    for cid in chunk_ids:
+        emb = by_id.get(cid)
+        if emb is None:  # a lost chunk would silently misalign the pack: skip, don't guess
+            return None
+        vecs.append(np.asarray(emb, dtype=np.float32))
+    return vecs
+
+
+def dedup_chunks(rows: list[dict], embeddings: list[np.ndarray] | None,
+                 threshold: float = DEDUP_THRESHOLD) -> list[dict]:
+    """Greedy near-duplicate removal in rank order: drop a row >threshold cosine to a kept row.
+
+    Returns rows in input (rank) order minus dropped duplicates. embeddings=None or a
+    length mismatch skips the check — the pack may then hold near-duplicates, never crash.
+    """
+    if not rows or embeddings is None or len(embeddings) != len(rows):
+        return list(rows)
+    m = np.stack(embeddings).astype(np.float32)
+    norms = np.linalg.norm(m, axis=1)
+    norms[norms == 0] = 1.0  # zero vectors are comparable to nothing: never duplicates
+    sim = (m / norms[:, None]) @ (m / norms[:, None]).T
+    kept_idx: list[int] = []
+    for i in range(len(rows)):
+        if kept_idx and float(sim[i, kept_idx].max()) > threshold:
+            log.debug("de-dup dropped %s (>%.2f cosine to a kept chunk)", rows[i].get("id"), threshold)
+            continue
+        kept_idx.append(i)
+    return [rows[i] for i in kept_idx]
+
+
 def effective_k(shape: str | None, k: int | None = None) -> int:
     """Explicit k wins; else the shape override; else the CONFIG base."""
     if k is not None:
@@ -279,7 +330,11 @@ async def retrieve(text: str, k: int | None = None, shape: str | None = None,
     query = expand_query(text, reading)
     vec = embed_query(query)
     rows = await knn(vec, k)
-    top = hybrid_rerank(rows, query, CONFIG["retrieval_fitness_floor"], CONFIG.get("bm25_weight", BM25_WEIGHT))[:k]
+    ranked = hybrid_rerank(rows, query, CONFIG["retrieval_fitness_floor"], CONFIG.get("bm25_weight", BM25_WEIGHT))
+    # feature 17: de-dup the full ranked candidate list, so a near-duplicate doesn't
+    # burn one of the k context slots.
+    embeddings = await chunk_embeddings([str(row.get("id", "")) for row in ranked])
+    top = dedup_chunks(ranked, embeddings)[:k]
     ctx, cites = numbered_context(top)
     ids = [c.chunk_id for c in cites if c.chunk_id]
     if ids:

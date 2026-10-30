@@ -4,7 +4,11 @@ import { isSilent, SILENT_CHANGE_EVENT } from "./silent.js";
 
 /* --------------------------------------------------------------------------- audio -- */
 var audioStateEl = $("#audioState");
+var fallbackBadge = $("#voiceFallback"); /* feature 58: visible fallback indicator */
 var currentAudio = null;
+function setFallback(on) {
+  if (fallbackBadge) fallbackBadge.hidden = !on;
+}
 function setAudio(text, cls) {
   audioStateEl.textContent = text;
   audioStateEl.className = "pill mono" + (cls ? " " + cls : "");
@@ -15,14 +19,16 @@ function browserSpeak(text) {
     if (!window.speechSynthesis || !text) { setAudio("audio idle", ""); return; }
     speechSynthesis.cancel();
     var u = new SpeechSynthesisUtterance(String(text));
-    u.onend = function () { setAudio("audio idle", ""); };
+    u.onend = function () { setAudio("audio idle", ""); setFallback(false); };
     speechSynthesis.speak(u);
     setAudio("browser voice (speechSynthesis)", "a");
-  } catch (e) { setAudio("browser voice (speechSynthesis)", "a"); }
+    setFallback(true); /* feature 58: badge shows whenever the fallback voice is in use */
+  } catch (e) { setAudio("browser voice (speechSynthesis)", "a"); setFallback(true); }
 }
 function stopAudio() {
   if (currentAudio) { try { currentAudio.pause(); } catch (e) {} currentAudio = null; }
   try { if (window.speechSynthesis) speechSynthesis.cancel(); } catch (e) {}
+  setFallback(false);
   setAudio("audio idle", "");
 }
 /* play audio_url; on ANY error, speak the same text with speechSynthesis.
@@ -38,6 +44,7 @@ function speak(text, audioUrl) {
   try { a = new Audio(src); } catch (e) { browserSpeak(text); return; }
   currentAudio = a;
   setAudio("playing", "g");
+  setFallback(false); /* feature 58: ElevenLabs audio is working — fallback badge off */
   a.onended = function () { setAudio("audio idle", ""); };
   a.onerror = function () { browserSpeak(text); };
   try {

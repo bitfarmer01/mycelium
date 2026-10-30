@@ -37,7 +37,7 @@
      GET  /config            [vitalsBody]  constants strip (decay, prior rates, ratio)
      POST /stt               [status]      transcript lands in the input, status updates
      GET  /tts               [audioState]  "playing" with a moving equaliser
-     /tts fallback           [audioState]  amber "browser voice (speechSynthesis)"
+     /tts fallback           [audioState]  amber "browser voice (speechSynthesis)" + [voiceFallback] badge visible
 
    UPLOAD   [uploadFiles] [uploadRejected] [uploadError]
      accepted        → per-file chip: kind + size → indexing pulse → chunk count-up

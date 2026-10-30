@@ -17,8 +17,8 @@ import types
 import httpx
 import pytest
 
-# (path, methods sans HEAD, handler name, websocket) — exactly what the monolith
-# served, verified by the before/after probe evidence in the PR.
+# (path, methods sans HEAD, handler name, websocket) — the monolith's routes plus
+# additive post-split routes (ops probes, workstream A).
 ROUTE_MANIFEST = [
     ("/", {"GET"}, "index", False),
     ("/ask", {"POST"}, "ask", False),
@@ -28,7 +28,9 @@ ROUTE_MANIFEST = [
     ("/events", set(), "events", True),
     ("/exam/burst", {"POST"}, "exam_burst", False),
     ("/exam/history", {"GET"}, "exam_history", False),
+    ("/healthz", {"GET"}, "healthz", False),
     ("/improve", {"POST"}, "improve", False),
+    ("/readyz", {"GET"}, "readyz", False),
     ("/reflect", {"POST"}, "reflect", False),
     ("/stt", {"POST"}, "stt", False),
     ("/tick", {"POST"}, "tick", False),
@@ -96,6 +98,12 @@ def probed_client(monkeypatch):
     def stt(data, content_type):
         return "hello"
 
+    class SttUploadError(ValueError):  # matches core.voice's interface
+        status_code = 415
+
+    def validate_stt_upload(data, content_type=None, filename=None):
+        return content_type or "audio/webm"
+
     def tts(text, quality=None):
         return b"audio"
 
@@ -106,7 +114,7 @@ def probed_client(monkeypatch):
     _stub(monkeypatch, "core.learn", correct=correct, confirm=confirm, decay_tick=decay_tick)
     _stub(monkeypatch, "core.reflect", reflect=reflect)
     _stub(monkeypatch, "core.growth", improve=improve, slot_version=lambda: "v1", load_slot=lambda: "s", slot_hash=lambda t: "h")
-    _stub(monkeypatch, "core.voice", stt=stt, tts=tts, tts_stream=tts_stream)
+    _stub(monkeypatch, "core.voice", stt=stt, SttUploadError=SttUploadError, validate_stt_upload=validate_stt_upload, tts=tts, tts_stream=tts_stream)
 
     from app.server import app
 

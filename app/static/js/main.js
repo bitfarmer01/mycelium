@@ -61,6 +61,7 @@ import { updateFeedEmpty } from "./feed.js";
 import { loadVitals, loadConfig } from "./vitals.js";
 import { connectWS, teardown } from "./ws.js";
 import { runAudit } from "./audit.js";
+import "./theme.js"; /* side-effect module: applies the persisted theme, wires the toggle */
 import "./ask.js"; /* side-effect module: wires the #sendBtn / Enter-key ask listeners */
 
 newSession();

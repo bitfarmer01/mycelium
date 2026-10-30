@@ -63,7 +63,8 @@ var FX = {
     slot_hash: "a1d76d187bfc59451414f1332fad6244f9cc482e5910c12c0f309d92cfe82ee8",
     baseline: null,
     counts: { chunk: 0, question: 38, lesson: 23, candidate: 14 },
-    runner: "daytona"
+    runner: "daytona",
+    metrics: { latency_ms_p50: 412, latency_ms_p95: 1730, error_rate: 0, sample_count: 61 }
   },
   config: {
     beta_evidence_confirm: 1.0, beta_evidence_correct: 0.0, bootstrap_n: 1000,
@@ -104,7 +105,13 @@ var FX = {
     { id: "candidate:errored", name: "constraints-first", axis: "constraints", status: "error", veto_reason: "sandbox failed: exec timeout after 150 s", sandbox_id: "sbx_88d02", runner: "daytona" }
   ],
   // a synthetic baseline so the scored/band path can be shown (the captured /vitals baseline is null)
-  baseline: { means: [0.68, 0.72, 0.7, 0.74, 0.71, 0.69, 0.73, 0.7, 0.71, 0.72], spread: 0.04 }
+  baseline: { means: [0.68, 0.72, 0.7, 0.74, 0.71, 0.69, 0.73, 0.7, 0.71, 0.72], spread: 0.04 },
+  // feature 64: live vitals frames as the server's /events push arrives every few seconds
+  metricsFrames: [
+    { latency_ms_p50: 418, latency_ms_p95: 1742, error_rate: 0, sample_count: 63 },
+    { latency_ms_p50: 435, latency_ms_p95: 1811, error_rate: 0.032, sample_count: 67 },
+    { latency_ms_p50: 401, latency_ms_p95: 1698, error_rate: 0.03, sample_count: 71 }
+  ]
 };
 
 export { FX };

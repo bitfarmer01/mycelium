@@ -37,6 +37,12 @@ function mockWs() {
     if (ci >= FX.candidates.length) { clearInterval(t2); return; }
     handleEvent({ table: "candidate", action: "CREATE", row: clone(FX.candidates[ci++]) });
   }, 1900);
+  /* feature 64: replay the live metrics push so the panel moves in mock mode */
+  var mi = 0;
+  var t3 = setInterval(function () {
+    if (mi >= FX.metricsFrames.length) { clearInterval(t3); return; }
+    handleEvent({ table: "vitals", action: "METRICS", row: { metrics: clone(FX.metricsFrames[mi++]) } });
+  }, 2600);
 }
 
 /* central stop for the beforeunload path in main.js (ws + wsTimer are private here) */

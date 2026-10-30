@@ -50,14 +50,44 @@ async def lifespan(app: FastAPI):
             log.info("shutdown drain complete: all in-flight work committed")
 
 
-app = FastAPI(title="Mycelium", lifespan=lifespan)
+app = FastAPI(
+    title="Mycelium",
+    version="0.1.0",
+    description=(
+        "A context layer over a company's knowledge that learns and proves it. "
+        "Answers questions with citations, explains its interpretation, learns "
+        "from corrections, and evaluates its own instruction changes."
+    ),
+    lifespan=lifespan,
+)
 app.add_middleware(RequestContextMiddleware)
 app.mount("/static", StaticFiles(directory=str(STATIC_DIR), check_dir=False), name="static")
-app.include_router(api.router)
-app.include_router(retrieval.router)
-app.include_router(llm.router)
-app.include_router(learning.router)
-app.include_router(exam.router)
-app.include_router(voice.router)
-app.include_router(vitals.router)
-app.include_router(ops.router)
+
+# Feature 10: tags are attached here, at include time, so each segment's router
+# file stays untouched and the OpenAPI grouping lives in one A-owned place.
+app.include_router(api.router, tags=["console"])
+app.include_router(retrieval.router, tags=["retrieval"])
+app.include_router(llm.router, tags=["ask"])
+app.include_router(learning.router, tags=["learning"])
+app.include_router(exam.router, tags=["exam"])
+app.include_router(voice.router, tags=["voice"])
+app.include_router(vitals.router, tags=["vitals"])
+app.include_router(ops.router, tags=["ops"])
+
+_ASK_EXAMPLE = {"text": "who owns billing?", "session_id": "sess-123"}
+
+
+def _openapi_with_examples() -> dict:
+    """Default schema plus request examples; never raises on a missing key."""
+    schema = _base_openapi()
+    try:
+        request_body = schema["paths"]["/ask"]["post"]["requestBody"]["content"]["application/json"]
+        request_body["example"] = _ASK_EXAMPLE
+        request_body["examples"] = {"typical": {"summary": "A question with a session", "value": _ASK_EXAMPLE}}
+    except (KeyError, TypeError):  # route moved or renamed: /docs must still render
+        pass
+    return schema
+
+
+_base_openapi = app.openapi
+app.openapi = _openapi_with_examples

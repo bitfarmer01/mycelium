@@ -1,5 +1,6 @@
 """Console module split guard (feature 61): no oversized inline script, module graph resolves,
 server serves the entrypoint. Static-file checks plus one ASGI request — no CLI/DB/network."""
+
 from __future__ import annotations
 
 import re
@@ -65,7 +66,9 @@ def test_every_local_import_resolves() -> None:
 def client():
     from app.server import app
 
-    return httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test")
+    return httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://test"
+    )
 
 
 async def test_root_references_entrypoint_and_modules_are_served(client) -> None:

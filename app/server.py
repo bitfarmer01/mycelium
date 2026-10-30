@@ -13,11 +13,13 @@ from dotenv import load_dotenv
 from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
 
+from app.middleware import RequestContextMiddleware
 from app.routers import api, exam, learning, llm, ops, retrieval, vitals, voice
 from app.routers.common import STATIC_DIR
 
 load_dotenv()
 
+<<<<<<< HEAD
 log = logging.getLogger("mycelium.server")
 
 
@@ -42,6 +44,7 @@ async def lifespan(_app):
 
 
 app = FastAPI(title="Mycelium", lifespan=lifespan)
+app.add_middleware(RequestContextMiddleware)
 app.mount("/static", StaticFiles(directory=str(STATIC_DIR), check_dir=False), name="static")
 app.include_router(api.router)
 app.include_router(retrieval.router)

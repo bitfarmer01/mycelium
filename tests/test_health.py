@@ -1,4 +1,5 @@
 """Health/readiness probes (feature 2): /healthz 200 always, /readyz 503 when SurrealDB is down."""
+
 from __future__ import annotations
 
 import sys
@@ -20,7 +21,9 @@ def _stub(monkeypatch, name: str, **funcs) -> types.ModuleType:
 def client():
     from app.server import app
 
-    return httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test")
+    return httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://test"
+    )
 
 
 async def test_healthz_always_200(client):

@@ -9,9 +9,8 @@ import logging
 import os
 from pathlib import Path
 
-from app.routers import api, llm, retrieval
+from app.routers import api, learning, llm, retrieval
 from app.routers.common import STATIC_DIR, _audio_url, _mod, _run
-from core.contracts import ROLES
 from dotenv import load_dotenv
 from fastapi import FastAPI, File, HTTPException, UploadFile
 from fastapi.responses import Response
@@ -31,32 +30,7 @@ app.mount("/static", StaticFiles(directory=str(STATIC_DIR), check_dir=False), na
 app.include_router(api.router)
 app.include_router(retrieval.router)
 app.include_router(llm.router)
-
-
-class CorrectIn(BaseModel):
-    question_id: str
-    to_role: str
-
-
-class ConfirmIn(BaseModel):
-    question_id: str
-
-
-@app.post("/correct")
-async def correct(body: CorrectIn):
-    if body.to_role not in ROLES:
-        raise HTTPException(status_code=422, detail=f"to_role must be one of {list(ROLES)}")
-    return await _run("learn", "correct", body.question_id, body.to_role)
-
-
-@app.post("/confirm")
-async def confirm(body: ConfirmIn):
-    return await _run("learn", "confirm", body.question_id)
-
-
-@app.post("/tick")
-async def tick():
-    return {"decayed": await _run("learn", "decay_tick")}
+app.include_router(learning.router)
 
 
 @app.post("/reflect")

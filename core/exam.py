@@ -1,24 +1,37 @@
-"""Exam controls: burst history (41), scheduled bursts (43), burst cost ceiling (45).
+"""Exam controls: burst history (41), poison detection (42), scheduled bursts (43),
+burst cost ceiling (45), warm sandbox pool (46), parallel scoring (50).
 
 Workstream E surface. growth.improve() stays the manual candidate-promotion burst
 (D-owned, untouched); this module wraps it with a hard cost ceiling, drives scheduled
-runs on an injectable clock, and reads the persisted exam record back out in order.
+runs on an injectable clock, classifies the pool's poison candidates against burst
+results, and reads the persisted exam record back out in order.
 
 The ceiling binds at core.runner.make_runner — the seam where improve() builds its
 scorer — via a module-attribute swap held for the duration of one burst. Bursts are
 serialized by a module lock so two concurrent bursts cannot fight over the seam.
+The warm pool (46) binds at the same seam: when enabled, make_runner hands improve()
+a PooledRunner whose sandboxes survive across bursts within a TTL, and whose size is
+capped by the org memory budget (docs/services.md: 10 GiB — three daytona-small).
 """
 from __future__ import annotations
 
 import asyncio
 import datetime as _dt
+import json
 import logging
 import os
+import time
+import uuid
 from collections.abc import Callable
-from contextlib import contextmanager
+from contextlib import contextmanager, suppress
+from dataclasses import dataclass
 from pathlib import Path
+from typing import TYPE_CHECKING, Any, Protocol
 
 from core import db
+
+if TYPE_CHECKING:
+    from core.runner import RunResult
 
 log = logging.getLogger("mycelium.exam")
 
@@ -55,6 +68,90 @@ async def history(limit: int = 100) -> list[dict]:
         rec["events"] = by_candidate.get(str(row.get("name", "")), [])
         out.append(rec)
     return out
+
+
+# ---------------------------------------------------------------------------------------------------- 42: poison report
+DEFAULT_POISON_MODES = {
+    "no-citations": "citations_dropped: the candidate forbids source citations",
+    "ignore-wiki": "context_ignored: the candidate discards the wiki context",
+    "invent": "fabrication: the candidate licenses invented sources or titles",
+}
+GENERIC_POISON_MODE = "poisoned_instruction: the candidate degrades grounded answering"
+
+
+def poison_threshold() -> float:
+    """Score below which a poison candidate is confirmed degraded (EXAM_POISON_THRESHOLD)."""
+    try:
+        return float(os.environ.get("EXAM_POISON_THRESHOLD", "0.5"))
+    except ValueError:
+        return 0.5
+
+
+def _failure_mode(entry: dict) -> str:
+    """Name how the poison fails: the pool's own label, then the known defaults, then generic."""
+    mode = entry.get("failure_mode")
+    if mode:
+        return str(mode)
+    name = str(entry.get("name", ""))
+    for key, named in DEFAULT_POISON_MODES.items():
+        if key in name:
+            return named
+    return GENERIC_POISON_MODE
+
+
+def _poison_status(row: dict | None, threshold: float) -> tuple[str, bool]:
+    """(status, promotion_risk) for one poison against its candidate row, if any."""
+    if row is None:
+        return "not_run", False
+    status = str(row.get("status") or "")
+    if status == "vetoed_prelint":
+        return "vetoed", False
+    if status == "error":
+        return "errored", False
+    mean = row.get("mean")
+    if mean is None:
+        return "not_run", False
+    if float(mean) < threshold:
+        return "detected", False
+    return "escaped", str(row.get("verdict")) == "PASS"
+
+
+def poison_report(candidates: list[dict], pool: dict | None, threshold: float) -> dict:
+    """Pure: classify the pool's poison candidates against burst candidate rows (feature 42).
+
+    A poison is `detected` when it scored below threshold (degraded as designed),
+    `escaped` when it scored at/above it — inert, or damage the scorer cannot see — and
+    carries promotion_risk when its verdict was PASS. `vetoed` poisons were stopped by
+    lint before any sandbox; `errored` runs never produced a score; `not_run` poisons
+    were absent from this burst. The report names the failure mode either way.
+    """
+    by_name = {str(r.get("name")): r for r in (candidates or []) if r.get("name")}
+    entries: list[dict] = []
+    escaped: list[str] = []
+    for entry in (pool or {}).get("poisons", []):
+        name = str(entry.get("name", ""))
+        row = by_name.get(name)
+        status, risk = _poison_status(row, threshold)
+        if status == "escaped":
+            escaped.append(name)
+        entries.append({"name": name, "failure_mode": _failure_mode(entry), "status": status,
+                        "mean": row.get("mean") if row else None,
+                        "veto_reason": row.get("veto_reason") if row else None,
+                        "promotion_risk": risk})
+    return {"threshold": threshold, "entries": entries, "escaped": escaped, "escaped_count": len(escaped)}
+
+
+def pool_definition() -> dict:
+    """The pool poisons are defined against: data/candidates.json or the built-in defaults."""
+    from core import growth
+
+    return growth._load_json("candidates.json") or growth.DEFAULT_POOL
+
+
+async def standing_poison_report() -> dict:
+    """Poison report over persisted candidates, no burst required (feature 42, GET /exam/poisons)."""
+    rows = await db.q("SELECT name, status, veto_reason, mean, verdict FROM candidate ORDER BY ts DESC LIMIT 200")
+    return poison_report(list(rows or []), pool_definition(), poison_threshold())
 
 
 # ---------------------------------------------------------------------------------------------------- 45: burst ceiling
@@ -100,19 +197,25 @@ def burst_budget() -> int:
 
 
 @contextmanager
-def _capped_make_runner(budget: int):
-    """Bind the budget at the seam growth.improve() uses to build its scorer."""
+def _burst_scoring_runner(cap: int, pool: SandboxPool | None):
+    """Bind the burst's scorer at the seam growth.improve() uses to build it.
+
+    With a pool, the scorer is the pool's PooledRunner; the base make_runner is not
+    consulted (the pool owns the sandbox lifecycle). Without one, the original
+    selection applies. A cap wraps whichever scorer in a BudgetedRunner.
+    """
     from core import runner as runner_mod
 
     original = runner_mod.make_runner
     made: list[BudgetedRunner] = []
 
-    def capped():
-        b = BudgetedRunner(original(), budget)
+    def make():
+        inner = PooledRunner(pool) if pool is not None else original()
+        b = BudgetedRunner(inner, cap) if cap > 0 else inner
         made.append(b)
         return b
 
-    runner_mod.make_runner = capped
+    runner_mod.make_runner = make
     try:
         yield made
     finally:
@@ -122,27 +225,343 @@ def _capped_make_runner(budget: int):
 _burst_lock = asyncio.Lock()
 
 
-async def improve_burst(budget: int | None = None) -> dict:
-    """growth.improve() under a hard per-burst cost ceiling (feature 45).
+async def improve_burst(budget: int | None = None, pool_slots: int | None = None) -> dict:
+    """growth.improve() under a hard per-burst cost ceiling (45) and, when configured,
+    the warm sandbox pool (46/50).
 
     Budget mode trades statistical power for cost control: scored candidates see fewer
-    packs than the baseline runs did. budget=0/None means unlimited (plain improve()).
+    packs than the baseline runs did. budget=0/None means unlimited. pool_slots=0/None
+    keeps the ephemeral-sandbox behavior unless EXAM_POOL_SIZE is set. Every burst path
+    returns the poison report (42) over its candidate rows.
     """
     from core import growth
 
     cap = burst_budget() if budget is None else max(0, int(budget))
+    size = pool_size() if pool_slots is None else max(0, int(pool_slots))
+    made: list[BudgetedRunner] = []
     async with _burst_lock:
-        if cap <= 0:
-            return await growth.improve()
-        with _capped_make_runner(cap) as made:
+        pool = _get_pool(size) if size > 0 else None
+        if cap <= 0 and pool is None:
             out = await growth.improve()
-    used = made[0].calls_used if made else 0
-    out["budget"] = cap
-    out["calls_used"] = used
-    out["stopped_early"] = used >= cap and any(
-        "BurstBudgetExhausted" in str(r.get("veto_reason") or "") for r in out.get("candidates", [])
-    )
+        else:
+            with _burst_scoring_runner(cap, pool) as ctx:
+                made = ctx
+                out = await growth.improve()
+    if cap > 0:
+        used = getattr(made[0], "calls_used", 0) if made else 0
+        out["budget"] = cap
+        out["calls_used"] = used
+        out["stopped_early"] = used >= cap and any(
+            "BurstBudgetExhausted" in str(r.get("veto_reason") or "") for r in out.get("candidates", [])
+        )
+    out["poisons"] = poison_report(out.get("candidates", []), pool_definition(), poison_threshold())
+    if pool is not None:
+        out["pool"] = pool.stats()
+    elif size > 0:  # requested but unavailable — say so instead of failing silently
+        out["pool"] = {"off": True, "requested_size": size, "reason": "no sandbox provider"}
     return out
+
+
+# ---------------------------------------------------------------------------------------------------- 46/50: warm sandbox pool
+POOL_GIB_BUDGET_DEFAULT = 10.0  # docs/services.md: "10 GiB total" for the org's sandbox pool
+SANDBOX_GIB_DEFAULT = 3.0       # docs/services.md: three daytona-small fit that budget
+POOL_TTL_MINUTES_DEFAULT = 15.0
+
+
+def pool_size() -> int:
+    """Configured warm-pool size (EXAM_POOL_SIZE); 0 = pool off, bursts build ephemeral sandboxes."""
+    try:
+        return max(0, int(os.environ.get("EXAM_POOL_SIZE", "0")))
+    except ValueError:
+        return 0
+
+
+def pool_ttl_seconds() -> float:
+    """Idle seconds a warm sandbox stays reusable (EXAM_POOL_TTL_MINUTES)."""
+    try:
+        return max(0.0, float(os.environ.get("EXAM_POOL_TTL_MINUTES", str(POOL_TTL_MINUTES_DEFAULT)))) * 60.0
+    except ValueError:
+        return POOL_TTL_MINUTES_DEFAULT * 60.0
+
+
+def pool_budget_gib() -> float:
+    """Memory the pool may hold (EXAM_POOL_GIB_BUDGET); docs/services.md caps the org pool at 10 GiB."""
+    try:
+        return max(0.0, float(os.environ.get("EXAM_POOL_GIB_BUDGET", str(POOL_GIB_BUDGET_DEFAULT))))
+    except ValueError:
+        return POOL_GIB_BUDGET_DEFAULT
+
+
+def sandbox_gib() -> float:
+    """Memory footprint of one pool sandbox (EXAM_SANDBOX_GIB); a daytona-small is ~3 GiB.
+
+    A pool larger than three needs smaller footprints: the budget cap below enforces
+    size <= budget_gib // sandbox_gib either way.
+    """
+    try:
+        return max(0.1, float(os.environ.get("EXAM_SANDBOX_GIB", str(SANDBOX_GIB_DEFAULT))))
+    except ValueError:
+        return SANDBOX_GIB_DEFAULT
+
+
+class SandboxProvider(Protocol):
+    """Lifecycle seam for pool sandboxes; the live Daytona path and test doubles share this shape."""
+
+    name: str
+
+    async def create(self, label: str) -> Any: ...
+    async def upload(self, sandbox, path: str, data: bytes) -> None: ...
+    async def exec(self, sandbox, command: str, timeout: float) -> str: ...  # stdout
+    async def delete(self, sandbox) -> None: ...
+    def env_bytes(self) -> bytes: ...
+    def exam_command(self) -> str: ...
+    async def close(self) -> None: ...
+
+
+class DaytonaPoolProvider:
+    """Live provider: exam sandboxes stay non-ephemeral so the pool can reuse them (46).
+
+    Mirrors core.runner.DaytonaRunner's lifecycle minus the per-run create/delete: the
+    pool creates with auto-stop off (docs/services.md exam posture) and deletes on
+    discard or TTL expiry. Auth env is built in memory only, as in the runner, and is
+    uploaded once per sandbox rather than once per run.
+    """
+
+    name = "daytona"
+
+    def __init__(self, snapshot: str | None = None):
+        from daytona import AsyncDaytona, DaytonaConfig
+
+        runner_mod = _runner_mod()
+        self.snapshot = snapshot or runner_mod.SNAPSHOT
+        self._client = AsyncDaytona(DaytonaConfig(api_key=os.environ["DAYTONA_API_KEY"]))
+
+    async def create(self, label: str) -> Any:
+        from daytona import CreateSandboxFromSnapshotParams
+
+        runner_mod = _runner_mod()
+        params = CreateSandboxFromSnapshotParams(
+            snapshot=self.snapshot, auto_stop_interval=0, ephemeral=False,
+            name=f"myc-pool-{label}-{uuid.uuid4().hex[:6]}"[:60], labels={"app": "mycelium", "pool": "exam"})
+        sandbox = await self._client.create(params, timeout=240)
+        # snapshot ships claude 2.1.19; same upgrade fallback as the ephemeral runner
+        await sandbox.process.exec(
+            f"bash -lc '{runner_mod.PATHX}; claude --help 2>&1 | grep -q -- --json-schema || "
+            "npm i -g @anthropic-ai/claude-code@latest >/tmp/inst.log 2>&1 || "
+            "sudo -n npm i -g @anthropic-ai/claude-code >>/tmp/inst.log 2>&1; claude --version'", timeout=600)
+        return sandbox
+
+    async def upload(self, sandbox, path: str, data: bytes) -> None:
+        await sandbox.fs.upload_file(data, path)
+
+    async def exec(self, sandbox, command: str, timeout: float) -> str:
+        resp = await sandbox.process.exec(command, timeout=timeout)
+        return resp.result
+
+    async def delete(self, sandbox) -> None:
+        try:
+            await self._client.delete(sandbox, timeout=120)
+        except Exception as e:  # noqa: BLE001 — a failed delete must not fail the burst
+            log.warning("pool sandbox delete failed: %s", e)
+
+    def env_bytes(self) -> bytes:
+        return _runner_mod().DaytonaRunner._env_bytes()
+
+    def exam_command(self) -> str:
+        # unlike the ephemeral runner the env file stays, so a warm sandbox can re-source it
+        return f"bash -lc '{_runner_mod().PATHX}; set -a; . /tmp/env; set +a; cd /tmp && python3 /tmp/exam.py'"
+
+    async def close(self) -> None:
+        with suppress(Exception):
+            await self._client.close()
+
+
+def _runner_mod():
+    from core import runner
+
+    return runner
+
+
+@dataclass
+class _Slot:
+    """One pool sandbox plus its warm-state bookkeeping."""
+
+    sandbox: Any
+    last_used: float
+    label: str = ""
+
+    @property
+    def id(self) -> str:
+        return str(getattr(self.sandbox, "id", ""))
+
+
+class SandboxPool:
+    """Bounded set of warm exam sandboxes (features 46 + 50).
+
+    Size is capped by the org memory budget: with daytona-small footprints (~3 GiB) at
+    most three sandboxes may be alive at once; smaller footprints allow a larger pool.
+    Runs queue on a semaphore of that size, so scoring parallelism can never exceed the
+    budget. A run that fails discards its sandbox (delete, not recycle) — a sandbox that
+    watched an error is not trusted warm. Sandboxes idle past the TTL are deleted on the
+    next acquire (lazy sweep): a second burst within the TTL reuses them and performs
+    zero create calls.
+    """
+
+    def __init__(self, provider: SandboxProvider, *, size: int, ttl_seconds: float,
+                 budget_gib: float, sandbox_gib: float, clock: Callable[[], float] = time.monotonic):
+        self.provider = provider
+        self.ttl_seconds = max(0.0, float(ttl_seconds))
+        self.budget_gib = float(budget_gib)
+        self.sandbox_gib = float(sandbox_gib)
+        self.requested_size = max(1, int(size))
+        fits = int(self.budget_gib // self.sandbox_gib) if self.sandbox_gib > 0 else self.requested_size
+        self.size = max(1, min(self.requested_size, fits))
+        self.clock = clock
+        self._sem = asyncio.Semaphore(self.size)
+        self._warm: list[_Slot] = []
+        self._stats = {"created": 0, "reused": 0, "expired": 0, "discarded": 0}
+
+    def stats(self) -> dict:
+        return {"provider": self.provider.name, "requested_size": self.requested_size,
+                "size": self.size, "capped_by_budget": self.requested_size - self.size,
+                "budget_gib": self.budget_gib, "sandbox_gib": self.sandbox_gib,
+                "ttl_seconds": self.ttl_seconds, "warm": len(self._warm), **self._stats}
+
+    async def _delete(self, slot: _Slot) -> None:
+        try:
+            await self.provider.delete(slot.sandbox)
+        except Exception as e:  # noqa: BLE001
+            log.warning("pool delete failed for %s: %s", slot.id, type(e).__name__)
+
+    async def _sweep(self) -> None:
+        now = self.clock()
+        expired = [s for s in self._warm if now - s.last_used > self.ttl_seconds]
+        if expired:
+            gone = {id(s) for s in expired}
+            self._warm = [s for s in self._warm if id(s) not in gone]
+            self._stats["expired"] += len(expired)
+            for s in expired:
+                await self._delete(s)
+
+    async def _acquire(self, label: str) -> _Slot:
+        await self._sweep()
+        if self._warm:
+            slot = self._warm.pop()
+            slot.label = label
+            self._stats["reused"] += 1
+            return slot
+        self._stats["created"] += 1
+        return _Slot(sandbox=await self.provider.create(label), last_used=self.clock(), label=label)
+
+    async def run_in(self, label: str, work: Callable[[Any], Any]):
+        """Run work(sandbox) in a pool slot: bounded by size, warm within TTL, deleted on failure."""
+        async with self._sem:
+            slot = await self._acquire(label)
+            try:
+                out = await work(slot.sandbox)
+            except Exception:
+                self._stats["discarded"] += 1
+                await self._delete(slot)
+                raise
+            slot.last_used = self.clock()
+            self._warm.append(slot)
+            return out
+
+    async def close(self) -> None:
+        warm, self._warm = self._warm, []
+        for s in warm:
+            await self._delete(s)
+        await self.provider.close()
+
+
+class PooledRunner:
+    """Runner-protocol scorer: every candidate run executes in a pool sandbox (46/50).
+
+    Answers reuse the runner module's exam script, renderer, and parser verbatim — the
+    only change vs the ephemeral DaytonaRunner is who owns the sandbox lifecycle (the
+    pool, not the run), so a burst of N candidates dispatches across the pool's slots
+    and the next burst within the TTL starts with zero create calls.
+    """
+
+    name = "daytona-pool"
+
+    def __init__(self, pool: SandboxPool):
+        self.pool = pool
+
+    async def run(self, slot: str, packs: list[dict], label: str) -> RunResult:
+        runner_mod = _runner_mod()
+        t0 = time.monotonic()
+        used: dict = {}
+
+        async def work(sandbox) -> list[dict]:
+            used["sandbox_id"] = str(getattr(sandbox, "id", ""))
+            if not getattr(sandbox, "myc_env_uploaded", False):
+                await self.pool.provider.upload(sandbox, "/tmp/env", self.pool.provider.env_bytes())
+                try:
+                    sandbox.myc_env_uploaded = True
+                except AttributeError:
+                    pass  # frozen handle: re-uploaded next run (correct, just less warm)
+            if not getattr(sandbox, "myc_exam_uploaded", False):
+                await self.pool.provider.upload(sandbox, "/tmp/exam.py", runner_mod.exam_script().encode())
+                try:
+                    sandbox.myc_exam_uploaded = True
+                except AttributeError:
+                    pass
+            items = runner_mod._render(slot, packs)
+            await self.pool.provider.upload(sandbox, "/tmp/packs.json", json.dumps(items).encode())
+            stdout = await self.pool.provider.exec(sandbox, self.pool.provider.exam_command(),
+                                                   timeout=runner_mod.EXEC_TIMEOUT)
+            return runner_mod._parse_exam_output(stdout, packs)
+
+        answers = await self.pool.run_in(label, work)
+        return {"runner": self.name, "sandbox_id": str(used.get("sandbox_id", "")),
+                "answers": answers, "ms": int((time.monotonic() - t0) * 1000)}
+
+
+_POOL: SandboxPool | None = None
+
+
+def _pool_provider() -> SandboxProvider | None:
+    """Live provider selection: Daytona only when the key is present and Bedrock auth works.
+
+    Dead Bedrock auth (the documented workshop-account expiry) keeps the pool off so
+    bursts fall back to the plain make_runner path instead of scoring against
+    sandboxes whose claude cannot answer — live bursts wait on fresh credentials.
+    """
+    if not os.environ.get("DAYTONA_API_KEY"):
+        return None
+    try:
+        if not _runner_mod().bedrock_health():
+            log.warning("exam pool off: Bedrock auth unhealthy (live bursts wait on fresh credentials)")
+            return None
+        return DaytonaPoolProvider()
+    except Exception as e:  # noqa: BLE001 — no SDK/key: the pool is simply off
+        log.warning("exam pool provider unavailable: %s", type(e).__name__)
+        return None
+
+
+def _get_pool(size: int) -> SandboxPool | None:
+    """Module-level pool singleton — warm sandboxes must outlive one burst to be reused (46).
+
+    Returns None when no provider is available; bursts then behave exactly as before.
+    The pool is sized from the env at first use and kept for the process lifetime.
+    """
+    global _POOL
+    if _POOL is None:
+        provider = _pool_provider()
+        if provider is None:
+            return None
+        _POOL = SandboxPool(provider, size=size, ttl_seconds=pool_ttl_seconds(),
+                            budget_gib=pool_budget_gib(), sandbox_gib=sandbox_gib())
+    return _POOL
+
+
+async def close_exam_pool() -> None:
+    """Delete warm sandboxes and shut the provider down (ops hook and test reset)."""
+    global _POOL
+    if _POOL is not None:
+        pool, _POOL = _POOL, None
+        await pool.close()
 
 
 # ---------------------------------------------------------------------------------------------------- 43: scheduler

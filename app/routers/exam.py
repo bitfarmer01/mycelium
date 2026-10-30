@@ -2,8 +2,9 @@
 from __future__ import annotations
 
 from fastapi import APIRouter
+from fastapi.responses import HTMLResponse
 
-from app.routers.common import _audio_url, _run
+from app.routers.common import _audio_url, _mod, _run
 
 router = APIRouter()
 
@@ -40,3 +41,16 @@ async def exam_burst():
 async def exam_poisons():
     """Standing poison report (feature 42): persisted candidates classified against the pool's poisons."""
     return await _run("exam", "standing_poison_report")
+
+
+@router.get("/exam/share")
+async def exam_share():
+    """Public read-only share link (feature 49): renders the last burst as static HTML.
+
+    GET-only, no auth dependency, and core.exam.share_payload issues SELECTs exclusively —
+    a viewer of the link cannot mutate the ledger. When bearer auth (feature 8) lands,
+    this path must stay on its public exempt list.
+    """
+    mod = _mod("exam")
+    payload = await mod.share_payload()
+    return HTMLResponse(mod.render_share_page(payload))

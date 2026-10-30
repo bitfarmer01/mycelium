@@ -1,5 +1,5 @@
 import { $, el, fmtBytes, fmtInt, countUp, glow } from "./dom.js";
-import { jpostForm } from "./api.js";
+import { jpostForm, pollUpload } from "./api.js";
 import { setStatus } from "./status.js";
 import { bumpCorpus, scheduleVitals } from "./vitals.js";
 
@@ -103,7 +103,11 @@ async function doUpload(files) {
   var fd = new FormData();
   files.forEach(function (f) { fd.append("files", f, f.name); });
   try {
-    renderUploadResult(await jpostForm("/upload", fd));
+    /* PR #26 contract: the 202 body is an acknowledgement (job_id), not a result —
+       poll /upload/status/{job_id} until indexing finishes, then render the result. */
+    var ack = await jpostForm("/upload", fd);
+    renderClientRejection(ack.rejected);
+    renderUploadResult(await pollUpload(ack));
   } catch (e) {
     renderUploadError(e.status || 0, e.message, e.status === 429);
     files.forEach(function (f) { markChipRejected(f.name, e.status === 429 ? "not sent — busy" : "rejected"); });

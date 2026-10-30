@@ -12,7 +12,7 @@ ROLES='["literal","intent","scope"]'
 
 echo "== beat 1: /ask"
 post /ask "{\"text\":\"$Q1\",\"session_id\":\"smoke-s1-$$\"}" > "$TMP/b1.json"
-CHUNKS=$(curl -sf "$BASE/vitals" | py -c 'import json,sys;print(json.load(sys.stdin)["counts"].get("chunk") or 0)' 2>/dev/null || echo 0)
+CHUNKS=$(curl -sf "$BASE/vitals" | python3 -c 'import json,sys;print(json.load(sys.stdin)["counts"].get("chunk") or 0)' 2>/dev/null || echo 0)
 py "$TMP/b1.json" "$CHUNKS" <<'P'
 import json,sys
 d=json.load(open(sys.argv[1])); chunks=int(sys.argv[2])

@@ -1,4 +1,5 @@
 """SurrealDB helper (surrealdb 2.0.0, AsyncSurreal over ws). The only database access path."""
+
 from __future__ import annotations
 
 import asyncio
@@ -7,7 +8,9 @@ import decimal
 import os
 import re
 import uuid
-from typing import Any, AsyncIterator
+import weakref
+from collections.abc import AsyncIterator
+from typing import Any
 
 from surrealdb import AsyncSurreal
 
@@ -15,14 +18,20 @@ SURREAL_URL = os.environ.get("SURREAL_URL", "ws://localhost:8000/rpc")
 NS = "mycelium"
 DB = "main"
 
-_conns: dict[int, Any] = {}
+_conns: weakref.WeakKeyDictionary[Any, Any] = weakref.WeakKeyDictionary()
 
 
 async def connect():
-    """Signed-in connection using NS/DB, cached per running event loop."""
+    """Signed-in connection using NS/DB, cached per running event loop.
+
+    Keyed by the loop object itself (weakly), not id(loop): ids are only unique
+    among LIVE objects, so a loop that was garbage-collected can hand its slot
+    to a new loop — which then gets a connection bound to the dead loop's
+    closed client ("Cannot reopen a client instance"). Weak keys drop the
+    entry when the loop dies, so a new loop always opens its own connection.
+    """
     loop = asyncio.get_running_loop()
-    key = id(loop)
-    conn = _conns.get(key)
+    conn = _conns.get(loop)
     if conn is not None:
         return conn
     conn = AsyncSurreal(os.environ.get("SURREAL_URL", SURREAL_URL))
@@ -34,8 +43,20 @@ async def connect():
         }
     )
     await conn.use(NS, DB)
-    _conns[key] = conn
+    _conns[loop] = conn
     return conn
+
+
+def _stale_client(e: BaseException) -> bool:
+    """Transport-level staleness (client closed with its loop, socket gone) —
+    as opposed to a SurrealQL statement error, which is deterministic."""
+    msg = str(e).lower()
+    return (
+        "closed" in msg
+        or "not connected" in msg
+        or "connection" in msg
+        and "refused" not in msg
+    )
 
 
 def plain(v: Any) -> Any:
@@ -60,8 +81,17 @@ def plain(v: Any) -> Any:
 
 async def q(sql: str, vars: dict | None = None) -> list:
     """Run SurrealQL; return the rows of the LAST statement as plain dicts ([] on none). Raises RuntimeError on a statement error."""
-    conn = await connect()
-    resp = await conn.query_raw(sql, vars or {})
+    resp = None
+    for attempt in (1, 2):
+        conn = await connect()
+        try:
+            resp = await conn.query_raw(sql, vars or {})
+            break
+        except (RuntimeError, ConnectionError, OSError) as e:
+            _conns.pop(asyncio.get_running_loop(), None)
+            if attempt == 2 or not _stale_client(e):
+                raise
+            # one reconnect: the cached client died with a previous loop
     if isinstance(resp, dict) and resp.get("error"):
         raise RuntimeError(f"surreal error: {resp['error']}")
     results = resp.get("result") if isinstance(resp, dict) else resp
@@ -96,13 +126,13 @@ async def live(table: str) -> AsyncIterator[dict]:
     finally:
         try:
             await conn.kill(qid)
-        except Exception:
+        except Exception:  # noqa: BLE001, S110 — best-effort kill on teardown; must not mask the consumer's exception
             pass
 
 
 def now() -> str:
     """UTC ISO 8601 timestamp."""
-    return _dt.datetime.now(_dt.timezone.utc).isoformat()
+    return _dt.datetime.now(_dt.UTC).isoformat()
 
 
 def rid(table: str, key: str) -> str:
